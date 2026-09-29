@@ -2,6 +2,8 @@
 
 The curve editor is an alternative to the Raw Accel GUI. Instead of typing coefficients, you shape the acceleration curve by dragging handles on the chart. It reads and writes the same `settings.json` as `rawaccel.exe` and `writer.exe`, so you can switch between the tools freely.
 
+![Curve editor with a capped classic curve: the cap handle was just raised, the dashed line is the last applied curve](images/curve-editor.png)
+
 Put `rawaccel-editor.exe` and `curve-editor-core.dll` in the Raw Accel folder, next to `wrapper.dll` and `settings.json`, then run it. Nothing reaches the driver until you press **Apply** (Ctrl+S). Apply validates the settings, writes `settings.json`, and sends them to the driver.
 
 ## The chart
