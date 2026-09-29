@@ -57,6 +57,8 @@ namespace CurveEditor.Core.Handles
 
         internal static bool Finite(double v) => !double.IsNaN(v) && !double.IsInfinity(v);
 
+        public static bool IsFinitePositive(double v) => Finite(v) && v > 0;
+
         private static readonly double[] Probes = BuildProbes();
 
         private static double[] BuildProbes()
