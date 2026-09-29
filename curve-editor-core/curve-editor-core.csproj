@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <RootNamespace>CurveEditor.Core</RootNamespace>
+    <AssemblyName>curve-editor-core</AssemblyName>
+    <LangVersion>9.0</LangVersion>
+    <Platforms>AnyCPU;x64;ARM64</Platforms>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.1" />
+  </ItemGroup>
+
+</Project>
