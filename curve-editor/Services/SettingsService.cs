@@ -72,6 +72,14 @@ namespace CurveEditor.Services
             Sidecar = CustomCurveSidecar.Load(SidecarPath);
         }
 
+        /// <summary> Default settings without touching the driver or disk (used by --screenshot). </summary>
+        public void LoadDefaults()
+        {
+            LoadWarning = null;
+            Config = DriverConfig.GetDefault();
+            Sidecar = new CustomCurveSidecar();
+        }
+
         /// <summary> Validates, writes settings.json and the sidecar, then sends the config to the driver. </summary>
         public async Task<string> ApplyAsync()
         {

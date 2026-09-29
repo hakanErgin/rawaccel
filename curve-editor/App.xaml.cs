@@ -9,6 +9,7 @@ namespace CurveEditor
     public partial class App : Application
     {
         private Mutex mutex;
+        private static bool headless;
 
         protected override void OnStartup(StartupEventArgs e)
         {
@@ -33,19 +34,26 @@ namespace CurveEditor
             };
             AppDomain.CurrentDomain.UnhandledException += (s, args) => Report((Exception)args.ExceptionObject);
 
-            try
+            // --screenshot <file.png>: render the editor with a demo curve and exit (no driver needed)
+            string screenshot = e.Args.Length == 2 && e.Args[0] == "--screenshot" ? Path.GetFullPath(e.Args[1]) : null;
+            headless = screenshot != null;
+
+            if (screenshot == null)
             {
-                VersionHelper.ValidOrThrow();
-            }
-            catch (Exception ex)
-            {
-                // wrong or missing driver: the same check the grapher does at startup
-                MessageBox.Show(ex.Message, "Raw Accel", MessageBoxButton.OK, MessageBoxImage.Error);
-                Shutdown();
-                return;
+                try
+                {
+                    VersionHelper.ValidOrThrow();
+                }
+                catch (Exception ex)
+                {
+                    // wrong or missing driver: the same check the grapher does at startup
+                    MessageBox.Show(ex.Message, "Raw Accel", MessageBoxButton.OK, MessageBoxImage.Error);
+                    Shutdown();
+                    return;
+                }
             }
 
-            var window = new MainWindow();
+            var window = new MainWindow(screenshot);
             MainWindow = window;
             window.Show();
         }
@@ -65,6 +73,13 @@ namespace CurveEditor
             catch (IOException)
             {
             }
+
+            if (headless)
+            {
+                Console.Error.WriteLine(ex);
+                Environment.Exit(1);
+            }
+
             MessageBox.Show(ex.Message, "Raw Accel curve editor error", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }

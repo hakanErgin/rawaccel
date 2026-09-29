@@ -68,6 +68,10 @@
     <Reference Include="System.Core" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="CurveEditorParityTests.cs" />
+    <Compile Include="..\curve-editor\Services\ArgsMapper.cs">
+      <Link>Linked\ArgsMapper.cs</Link>
+    </Compile>
     <Compile Include="EndToEndTests.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="SpeedTests.cs" />
@@ -77,6 +81,10 @@
     <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\curve-editor-core\curve-editor-core.csproj">
+      <Project>{B3E7B0F2-6C1D-4E57-9C2A-3F4A1D2E5C01}</Project>
+      <Name>curve-editor-core</Name>
+    </ProjectReference>
     <ProjectReference Include="..\wrapper\wrapper.vcxproj">
       <Project>{28a3656f-a1de-405c-b547-191c32ec555f}</Project>
       <Name>wrapper</Name>

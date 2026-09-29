@@ -1,7 +1,10 @@
 using System;
 using System.ComponentModel;
 using System.Windows;
+using System.IO;
 using System.Windows.Interop;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using CurveEditor.Controls;
 using CurveEditor.Services;
@@ -13,10 +16,12 @@ namespace CurveEditor
     {
         private readonly MainViewModel vm;
         private readonly DispatcherTimer liveTimer;
+        private readonly string screenshotPath;
         private RawMouseInput rawInput;
 
-        public MainWindow()
+        public MainWindow(string screenshotPath = null)
         {
+            this.screenshotPath = screenshotPath;
             InitializeComponent();
 
             var settings = new SettingsService(AppDomain.CurrentDomain.BaseDirectory);
@@ -57,6 +62,13 @@ namespace CurveEditor
 
         private void OnLoaded(object sender, RoutedEventArgs e)
         {
+            if (screenshotPath != null)
+            {
+                vm.LoadDemo();
+                Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(SaveScreenshot));
+                return;
+            }
+
             try
             {
                 vm.Load();
@@ -70,6 +82,26 @@ namespace CurveEditor
 
             vm.ResetView();
             Chart.Focus();
+        }
+
+        private void SaveScreenshot()
+        {
+            var root = (FrameworkElement)Content;
+            var dpi = VisualTreeHelper.GetDpi(this);
+            var bitmap = new RenderTargetBitmap(
+                (int)Math.Ceiling(root.ActualWidth * dpi.DpiScaleX),
+                (int)Math.Ceiling(root.ActualHeight * dpi.DpiScaleY),
+                dpi.PixelsPerInchX, dpi.PixelsPerInchY, PixelFormats.Pbgra32);
+            bitmap.Render(root);
+
+            var encoder = new PngBitmapEncoder();
+            encoder.Frames.Add(BitmapFrame.Create(bitmap));
+            using (var file = File.Create(screenshotPath))
+            {
+                encoder.Save(file);
+            }
+
+            Application.Current.Shutdown();
         }
 
         protected override void OnSourceInitialized(EventArgs e)
@@ -103,7 +135,7 @@ namespace CurveEditor
 
         private void OnClosing(object sender, CancelEventArgs e)
         {
-            if (!vm.IsDirty) return;
+            if (!vm.IsDirty || screenshotPath != null) return;
             var answer = MessageBox.Show(this, "You have changes that haven't been applied. Close anyway?", "Raw Accel",
                 MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
             if (answer != MessageBoxResult.Yes)

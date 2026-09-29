@@ -1,0 +1,71 @@
+name: curve-editor
+
+on:
+  push:
+    paths:
+      - 'curve-editor/**'
+      - 'curve-editor-core/**'
+      - 'curve-editor-core-tests/**'
+      - 'wrapper/**'
+      - 'wrapper-tests/**'
+      - 'common/**'
+      - 'rawaccel.sln'
+      - '.github/workflows/curve-editor.yml'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: microsoft/setup-msbuild@v2
+
+      - uses: nuget/setup-nuget@v2
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: nuget restore rawaccel.sln
+
+      # the driver, installer and grapher are not needed (no WDK on the runner)
+      - name: Build wrapper, curve editor and wrapper tests
+        run: msbuild rawaccel.sln -t:"curve-editor;wrapper-tests" -p:Configuration=Release -p:Platform=x64 -m -nologo -v:minimal
+
+      - name: Core tests (curve math, handles, native parity)
+        run: dotnet test curve-editor-core-tests -c Release --nologo
+
+      - name: Wrapper tests (editor preview vs. driver pipeline)
+        shell: pwsh
+        run: |
+          $vstest = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -find "**\TestPlatform\vstest.console.exe" | Select-Object -First 1
+          & $vstest wrapper-tests\bin\Release\wrapper-tests.dll /Platform:x64
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Render screenshot
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath x64\Release\rawaccel-editor.exe -ArgumentList '--screenshot', "$pwd\curve-editor.png" -PassThru
+          if (-not $p.WaitForExit(60000)) { $p.Kill(); throw 'screenshot timed out' }
+          if ($p.ExitCode -ne 0) { throw "screenshot failed with exit code $($p.ExitCode)" }
+          if (-not (Test-Path curve-editor.png)) { throw 'no screenshot written' }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rawaccel-editor-x64
+          path: |
+            x64/Release/rawaccel-editor.exe
+            x64/Release/rawaccel-editor.exe.config
+            x64/Release/curve-editor-core.dll
+            x64/Release/wrapper.dll
+            x64/Release/Newtonsoft.Json.dll
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshot
+          path: curve-editor.png
+          if-no-files-found: ignore

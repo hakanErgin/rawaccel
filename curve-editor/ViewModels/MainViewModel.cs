@@ -147,6 +147,36 @@ namespace CurveEditor.ViewModels
         public void Load()
         {
             settings.Load();
+            LoadProfiles();
+            Status = settings.LoadWarning ?? $"Loaded {settings.SettingsPath}";
+        }
+
+        /// <summary>
+        /// Demo state for screenshots: a capped classic curve whose cap was just raised, so the
+        /// ghost curve, handles and deltas are all visible. Never touches the driver or disk.
+        /// </summary>
+        public void LoadDemo()
+        {
+            settings.LoadDefaults();
+            LoadProfiles();
+
+            var applied = State.Clone();
+            applied.X = new CurveArgs { Mode = CurveMode.Classic, Gain = true, Acceleration = 0.03, ExponentClassic = 2, InputOffset = 2, CapY = 1.6, CapMode = CapType.Output };
+            selected.Applied = applied;
+
+            var current = applied.Clone();
+            current.X = HandleSets.For(CurveMode.Classic).Drag(applied.X, HandleIds.Cap, new Point2(26, 1.75), HandleContext.Default);
+            selected.Current = current;
+
+            RebuildParameters();
+            ResetView();
+            SelectedHandleId = HandleIds.Cap;
+            RefreshAll();
+            Status = "Demo curve (screenshot mode)";
+        }
+
+        private void LoadProfiles()
+        {
             Profiles.Clear();
 
             foreach (var p in settings.Config.profiles)
@@ -157,8 +187,8 @@ namespace CurveEditor.ViewModels
 
             devicesDirty = false;
             deletedNames.Clear();
+            selected = null;
             SelectedProfile = Profiles.FirstOrDefault();
-            Status = settings.LoadWarning ?? $"Loaded {settings.SettingsPath}";
         }
 
         #endregion
