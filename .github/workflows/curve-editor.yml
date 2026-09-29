@@ -28,12 +28,13 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - name: Restore
+      # packages.config projects (wrapper-deps, wrapper-tests); SDK projects restore in the build step
+      - name: Restore packages.config projects
         run: nuget restore rawaccel.sln
 
       # the driver, installer and grapher are not needed (no WDK on the runner)
       - name: Build wrapper, curve editor and wrapper tests
-        run: msbuild rawaccel.sln -t:"curve-editor;wrapper-tests" -p:Configuration=Release -p:Platform=x64 -m -nologo -v:minimal
+        run: msbuild rawaccel.sln -restore -t:"curve-editor;wrapper-tests" -p:Configuration=Release -p:Platform=x64 -m -nologo -v:minimal
 
       - name: Core tests (curve math, handles, native parity)
         run: dotnet test curve-editor-core-tests -c Release --nologo

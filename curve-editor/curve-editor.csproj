@@ -8,6 +8,8 @@
     <AssemblyName>rawaccel-editor</AssemblyName>
     <LangVersion>9.0</LangVersion>
     <Platforms>x64;ARM64</Platforms>
+    <!-- x64/ARM64 .NET Framework exes build with a RID; list them so a platform-less restore (nuget.exe, VS) covers them -->
+    <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
     <ApplicationIcon>..\grapher\mouse.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
