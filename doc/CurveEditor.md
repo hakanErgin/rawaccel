@@ -46,6 +46,7 @@ Classic and power curves are saved using the `output` cap mode. Curves loaded wi
 | Zoom | Mouse wheel at the cursor. Shift+wheel zooms only the speed axis, Ctrl+wheel only the sensitivity axis. Right-drag draws a box to zoom into. `+`/`-` zoom around the centre. |
 | Pan | Drag empty space with the left or middle button. |
 | Zoom to a handle | Select it and press **Z**, double-click it, or click **Zoom to handle**. Each press zooms 10× around the handle, so drags and arrow nudges get 10× finer. This is the easy way to adjust small values such as an input offset close to 0. |
+| Keep the range | Changing mode keeps the current speed range, so the numbers along the bottom don't jump. If none of the new mode's handles would be visible, the range widens to show them. |
 | Fit / reset | **F** fits the view to the curve: the speed range is widened or narrowed so every handle is inside it, then the sensitivity range is fitted. **Home** resets the view. |
 | Fine drag | Hold **Shift** for 1/10 of the mouse movement, or **Shift+Ctrl** for 1/100. Drags are relative, so grabbing a handle never makes it jump. You can press or release the modifiers mid-drag. |
 | Lock an axis | Hold **Alt** while dragging. |

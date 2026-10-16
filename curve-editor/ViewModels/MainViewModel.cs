@@ -574,7 +574,10 @@ namespace CurveEditor.ViewModels
             if (mode == CurveMode.Synchronous && !view.LogX) LogX = true;
             RebuildParameters();
             RefreshAll();
-            ResetView();
+            // keep the speed range so the axis doesn't jump; only refit it if no handle would be visible
+            RecomputeContext();
+            if (!AnyFixedHandleInView()) FitX();
+            FitY();
         }
 
         private void ConvertToCustom()
@@ -875,16 +878,29 @@ namespace CurveEditor.ViewModels
         /// little room on both sides. Handles that follow the view (the uncapped accel/scale point
         /// and level lines) are always in view and don't count.
         /// </summary>
+        private IEnumerable<double> FixedHandleXs()
+        {
+            var a = CurrentArgs;
+            if (a == null) return Enumerable.Empty<double>();
+            return HandleSets.For(a.Mode).GetHandles(a, Context)
+                .Where(h => h.Id != HandleIds.Point && h.Kind != HandleKind.Level)
+                .Select(h => h.Position.X)
+                .Where(x => HandleSets.Finite(x) && x >= 0)
+                .ToList();
+        }
+
+        private bool AnyFixedHandleInView()
+        {
+            var xs = FixedHandleXs().ToList();
+            return xs.Count == 0 || xs.Any(x => x >= view.MinX && x <= view.MaxX);
+        }
+
         private void FitX()
         {
             var a = CurrentArgs;
             if (a == null) return;
 
-            var xs = HandleSets.For(a.Mode).GetHandles(a, Context)
-                .Where(h => h.Id != HandleIds.Point && h.Kind != HandleKind.Level)
-                .Select(h => h.Position.X)
-                .Where(x => HandleSets.Finite(x) && x >= 0)
-                .ToList();
+            var xs = FixedHandleXs().ToList();
             if (xs.Count == 0) return;
 
             double max = Math.Max(xs.Max() * 1.15, 1);
