@@ -1,0 +1,59 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net472</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>CurveEditor</RootNamespace>
+    <AssemblyName>rawaccel-editor</AssemblyName>
+    <LangVersion>9.0</LangVersion>
+    <Platforms>x64;ARM64</Platforms>
+    <!-- x64/ARM64 .NET Framework exes build with a RID; list them so a platform-less restore (nuget.exe, VS) covers them -->
+    <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
+    <ApplicationIcon>..\grapher\mouse.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <Product>Raw Accel Curve Editor</Product>
+    <!-- lets the project build on non-Windows hosts (with a wrapper stub, see below) -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+
+  <!-- Sit next to rawaccel.exe and wrapper.dll, like the other solution outputs. -->
+  <PropertyGroup Condition="'$(SolutionDir)' != '' And '$(SolutionDir)' != '*Undefined*'">
+    <OutputPath>$(SolutionDir)$(Platform)\$(Configuration)\</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Platform)' == 'x64'">
+    <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Platform)' == 'ARM64'">
+    <PlatformTarget>ARM64</PlatformTarget>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\curve-editor-core\curve-editor-core.csproj" />
+  </ItemGroup>
+
+  <!--
+    The C++/CLI wrapper only builds on Windows. Pass /p:WrapperStubPath=<path to a wrapper.dll
+    with the same public API> to compile this project elsewhere (compile check only).
+  -->
+  <ItemGroup Condition="'$(WrapperStubPath)' == ''">
+    <ProjectReference Include="..\wrapper\wrapper.vcxproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(WrapperStubPath)' != ''">
+    <Reference Include="wrapper">
+      <HintPath>$(WrapperStubPath)</HintPath>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="..\grapher\mouse.ico" Link="mouse.ico" />
+  </ItemGroup>
+
+</Project>

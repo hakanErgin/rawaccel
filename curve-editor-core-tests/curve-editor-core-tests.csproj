@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>CurveEditor.Core.Tests</RootNamespace>
+    <AssemblyName>curve-editor-core-tests</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <Platforms>AnyCPU;x64;ARM64</Platforms>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="MSTest.TestAdapter" Version="3.6.1" />
+    <PackageReference Include="MSTest.TestFramework" Version="3.6.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\curve-editor-core\curve-editor-core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="NativeReference\native-reference.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="NativeReference\gen.cpp" />
+  </ItemGroup>
+
+</Project>
