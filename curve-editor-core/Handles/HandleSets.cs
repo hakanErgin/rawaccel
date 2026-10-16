@@ -55,7 +55,7 @@ namespace CurveEditor.Core.Handles
 
         internal static double Eval(CurveArgs a, double x) => CurveMath.Sensitivity(a, x);
 
-        internal static bool Finite(double v) => !double.IsNaN(v) && !double.IsInfinity(v);
+        public static bool Finite(double v) => !double.IsNaN(v) && !double.IsInfinity(v);
 
         public static bool IsFinitePositive(double v) => Finite(v) && v > 0;
 

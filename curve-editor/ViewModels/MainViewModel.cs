@@ -274,7 +274,7 @@ namespace CurveEditor.ViewModels
             {
                 if (!Set(ref chartKind, value)) return;
                 Raise();
-                Fit();
+                FitY();
             }
         }
 
@@ -870,15 +870,55 @@ namespace CurveEditor.ViewModels
             return Math.Max(10, Math.Min(max, 5000));
         }
 
-        public void ResetView()
+        /// <summary>
+        /// Sets the speed range so every handle with a fixed position is inside the view, with a
+        /// little room on both sides. Handles that follow the view (the uncapped accel/scale point
+        /// and level lines) are always in view and don't count.
+        /// </summary>
+        private void FitX()
+        {
+            var a = CurrentArgs;
+            if (a == null) return;
+
+            var xs = HandleSets.For(a.Mode).GetHandles(a, Context)
+                .Where(h => h.Id != HandleIds.Point && h.Kind != HandleKind.Level)
+                .Select(h => h.Position.X)
+                .Where(x => HandleSets.Finite(x) && x >= 0)
+                .ToList();
+            if (xs.Count == 0) return;
+
+            double max = Math.Max(xs.Max() * 1.15, 1);
+            double min;
+            if (view.LogX)
+            {
+                double smallest = xs.Where(x => x > 0).DefaultIfEmpty(max / 1000).Min();
+                min = Math.Max(smallest / 1.5, ViewState.MinLogX);
+            }
+            else
+            {
+                min = -0.04 * max;
+            }
+
+            view.SetWindow(min, max, view.MinY, view.MaxY);
+            RecomputeContext();
+        }
+
+                public void ResetView()
         {
             double maxX = DefaultMaxX();
             view.SetWindow(view.LogX ? maxX / 1000 : -0.04 * maxX, maxX, 0.5, 2);
             RecomputeContext();
-            Fit();
+            FitY();
         }
 
+        /// <summary> F / Fit: frame every handle horizontally, then fit the values vertically. </summary>
         public void Fit()
+        {
+            FitX();
+            FitY();
+        }
+
+        private void FitY()
         {
             var curve = Curve;
             var ghost = Ghost;
