@@ -142,6 +142,11 @@ namespace CurveEditor.Controls
 
         public DateTime LiveTime { get; set; }
 
+        /// <summary> Fastest input speed of the last 5 seconds of movement (kept after you stop). </summary>
+        public double? PeakSpeed { get; set; }
+
+        public bool ShowPeak { get; set; } = true;
+
         public string XAxisLabel { get; set; } = "Input speed (counts/ms at 1000 DPI)";
 
         public event EventHandler<HandleEventArgs> HandleSelected;
@@ -235,6 +240,7 @@ namespace CurveEditor.Controls
 
             if (HandlesVisible) DrawHandles(dc, plot);
 
+            DrawPeak(dc, plot);
             DrawLive(dc);
 
             if (cursor is Point c && plot.Contains(c) && drag != DragMode.Pan)
@@ -385,6 +391,39 @@ namespace CurveEditor.Controls
                     dc.DrawText(t, new Point(p.X + 9, p.Y - t.Height - 4));
                 }
             }
+        }
+
+        private static readonly Pen PeakPen = Frozen(new Pen(new SolidColorBrush(Color.FromArgb(0xB0, 0x81, 0xC7, 0x84)), 1.2) { DashStyle = new DashStyle(new double[] { 3, 3 }, 0) });
+        private static readonly Brush PeakLabelBrush = Frozen(new SolidColorBrush(Color.FromArgb(0xE0, 0x1B, 0x1D, 0x21)));
+
+        private void DrawPeak(DrawingContext dc, Rect plot)
+        {
+            if (!ShowPeak || !(PeakSpeed is double v) || Ghost == null) return;
+
+            double sens = Value(Ghost, v);
+            double sx = View.XToScreen(v);
+            bool inside = sx >= plot.Left && sx <= plot.Right;
+
+            string label = string.Format(CultureInfo.InvariantCulture, "peak 5 s: {0:G4}  ({1:G4}×)", v, sens);
+            if (sx < plot.Left) label = "← " + label;
+            if (sx > plot.Right) label += " →";
+            var t = Text(label, 11, LiveBrush);
+
+            double lineX = Math.Max(plot.Left, Math.Min(plot.Right, sx));
+            if (inside)
+            {
+                dc.DrawLine(PeakPen, new Point(sx, plot.Top), new Point(sx, plot.Bottom));
+                double sy = View.YToScreen(sens);
+                if (!double.IsNaN(sy) && sy >= plot.Top && sy <= plot.Bottom)
+                {
+                    dc.DrawEllipse(null, new Pen(LiveBrush, 1.5), new Point(sx, sy), 5, 5);
+                }
+            }
+
+            double lx = Math.Min(Math.Max(lineX + 6, plot.Left + 4), plot.Right - t.Width - 6);
+            var box = new Rect(lx - 3, plot.Bottom - t.Height - 10, t.Width + 6, t.Height + 4);
+            dc.DrawRoundedRectangle(PeakLabelBrush, null, box, 3, 3);
+            dc.DrawText(t, new Point(lx, box.Top + 2));
         }
 
         private void DrawLive(DrawingContext dc)

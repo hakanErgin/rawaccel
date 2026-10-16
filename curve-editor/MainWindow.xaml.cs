@@ -7,6 +7,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using CurveEditor.Controls;
+using CurveEditor.Core.Interaction;
 using CurveEditor.Services;
 using CurveEditor.ViewModels;
 
@@ -18,6 +19,8 @@ namespace CurveEditor
         private readonly DispatcherTimer liveTimer;
         private readonly string screenshotPath;
         private RawMouseInput rawInput;
+        private readonly PeakTracker peak = new PeakTracker(5);
+        private readonly System.Diagnostics.Stopwatch clock = System.Diagnostics.Stopwatch.StartNew();
 
         public MainWindow(string screenshotPath = null)
         {
@@ -52,8 +55,11 @@ namespace CurveEditor
             liveTimer = new DispatcherTimer(DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(33) };
             liveTimer.Tick += (s, e) =>
             {
+                peak.Update(clock.Elapsed.TotalSeconds);
+                Chart.PeakSpeed = peak.Peak;
                 Chart.InvalidateVisual();
-                if ((DateTime.UtcNow - Chart.LiveTime).TotalSeconds > 1.6) liveTimer.Stop();
+                // run until the 5 s peak window has settled
+                if ((DateTime.UtcNow - Chart.LiveTime).TotalSeconds > 5.5) liveTimer.Stop();
             };
 
             Loaded += OnLoaded;
@@ -65,6 +71,7 @@ namespace CurveEditor
             if (screenshotPath != null)
             {
                 vm.LoadDemo();
+                Chart.PeakSpeed = 38; // sample swipe so the screenshot shows the peak marker
                 Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(SaveScreenshot));
                 return;
             }
@@ -119,6 +126,8 @@ namespace CurveEditor
             var speed = vm.LiveInputSpeed(dx, dy, timeMs);
             if (speed == null) return;
             Chart.LiveSpeed = speed;
+            peak.Add(clock.Elapsed.TotalSeconds, speed.Value);
+            Chart.PeakSpeed = peak.Peak;
             Chart.LiveTime = DateTime.UtcNow;
             if (!liveTimer.IsEnabled) liveTimer.Start();
         }
@@ -154,6 +163,13 @@ namespace CurveEditor
         {
             var dialog = new DevicesWindow(vm.Config, vm.Profiles) { Owner = this };
             if (dialog.ShowDialog() == true) vm.DevicesChanged();
+        }
+
+        private void OnShowPeakChanged(object sender, RoutedEventArgs e)
+        {
+            if (Chart == null) return;
+            Chart.ShowPeak = ((System.Windows.Controls.CheckBox)sender).IsChecked == true;
+            Chart.InvalidateVisual();
         }
 
         private void OnZoomToHandle(object sender, RoutedEventArgs e)

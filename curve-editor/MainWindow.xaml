@@ -196,10 +196,13 @@
                     <RadioButton Content="Velocity" Foreground="#C9CDD4" GroupName="kind" Margin="0,0,10,0" VerticalAlignment="Center" Checked="OnKindVelocity" />
                     <RadioButton Content="Gain" Foreground="#C9CDD4" GroupName="kind" Margin="0,0,18,0" VerticalAlignment="Center" Checked="OnKindGain" />
                     <CheckBox Content="Log speed axis" Foreground="#C9CDD4" IsChecked="{Binding LogX}" VerticalAlignment="Center" Margin="0,0,18,0" />
+                    <CheckBox Content="Peak (5 s)" Foreground="#C9CDD4" IsChecked="True" VerticalAlignment="Center" Margin="0,0,18,0"
+                              Checked="OnShowPeakChanged" Unchecked="OnShowPeakChanged"
+                              ToolTip="Mark the fastest mouse speed of the last 5 seconds on the applied curve. It stays after you stop moving, so you can check a swipe afterwards." />
                     <Button Content="Fit (F)" Command="{Binding FitCommand}" />
                     <Button Content="Reset view (Home)" Command="{Binding ResetViewCommand}" />
                     <Button Content="Zoom to handle (Z)" Click="OnZoomToHandle" ToolTip="Zoom 10× around the selected handle (or double-click a handle) for finer drags and nudges" />
-                    <TextBlock Text="  ─ current   ┄ applied   ● live mouse" Foreground="#8A9099" VerticalAlignment="Center" Margin="10,0,0,0" />
+                    <TextBlock Text="  ─ current   ┄ applied   ● live mouse   ┆ 5 s peak" Foreground="#8A9099" VerticalAlignment="Center" Margin="10,0,0,0" />
                 </StackPanel>
             </Border>
             <c:CurveCanvas x:Name="Chart" />

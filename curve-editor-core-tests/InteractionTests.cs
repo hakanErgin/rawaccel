@@ -243,5 +243,29 @@ namespace CurveEditor.Core.Tests
             var capRight = HandleInteraction.ValueStepTarget(v, cap, Handles.HandleConstraint.Free, 1, 1, horizontal: true);
             Assert.AreEqual(201, capRight.X, 1e-9);
         }
+
+        [TestMethod]
+        public void PeakTrackerKeepsMaximumOfLastFiveSeconds()
+        {
+            var p = new PeakTracker(5);
+            Assert.IsNull(p.Peak);
+
+            p.Add(0, 10);
+            p.Add(1, 40);
+            p.Add(2, 20);
+            Assert.AreEqual(40, p.Peak);
+
+            p.Add(5.5, 15);
+            Assert.AreEqual(40, p.Peak, "40 at t=1 is still inside the window");
+
+            p.Add(6.5, 12);
+            Assert.AreEqual(20, p.Peak, "40 aged out; 20 at t=2 is now the max");
+
+            p.Update(30);
+            Assert.AreEqual(20, p.Peak, "no new movement: the last peak stays readable");
+
+            p.Add(31, 8);
+            Assert.AreEqual(8, p.Peak, "new movement starts a fresh window");
+        }
     }
 }

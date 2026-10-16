@@ -20,6 +20,7 @@ Nothing reaches the driver until you press **Apply** (Ctrl+S). Apply validates t
 - **Solid line:** the curve you are editing.
 - **Dashed line:** the last applied settings. Compare the two while you make changes.
 - **Green dot:** your mouse as you move it, placed on the applied curve.
+- **Green dashed line (peak):** the fastest speed of your last 5 seconds of movement, with the sensitivity you got there. It stays put after you stop, so you can do a swipe and read it afterwards. Turn it off with *Peak (5 s)* above the chart.
 - **Speed axis:** counts/ms at 1000 DPI, which is the same unit the driver and the old GUI use. If a device has a DPI set under **Devices…**, speed is normalized to inches per second.
 - **Views:** switch between *Sensitivity*, *Velocity* and *Gain* at the top. Handles are shown in the Sensitivity view.
 - **Readout:** hovering shows the speed, the current value, the applied value and the difference (Δ).
