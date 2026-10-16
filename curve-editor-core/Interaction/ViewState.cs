@@ -10,6 +10,12 @@ namespace CurveEditor.Core.Interaction
     public sealed class ViewState
     {
         public const double MinLogX = 1e-3;
+
+        /// <summary>
+        /// A linear speed axis may start a little below zero (this fraction of MaxX) so handles at
+        /// or near zero, such as a tiny input offset, sit fully inside the plot.
+        /// </summary>
+        public const double LeftMargin = 0.05;
         private const double MinSpan = 1e-9;
 
         public double MinX { get; private set; } = 0;
@@ -37,7 +43,7 @@ namespace CurveEditor.Core.Interaction
             }
             else
             {
-                minX = Math.Max(minX, 0);
+                minX = Math.Max(minX, LinearMinX(maxX));
             }
 
             if (maxX - minX < MinSpan) maxX = minX + MinSpan;
@@ -95,9 +101,40 @@ namespace CurveEditor.Core.Interaction
             double dt = -dxScreen / Width * (t1 - t0);
             double dy = dyScreen / Height * (MaxY - MinY);
 
-            if (!LogX && t0 + dt < 0) dt = -t0;
+            if (!LogX)
+            {
+                // keep the span when the left margin stops the pan
+                double span = t1 - t0;
+                double lowest = -LeftMargin * span / (1 + LeftMargin);
+                if (t0 + dt < lowest) dt = lowest - t0;
+            }
 
             SetWindow(InvTX(t0 + dt), InvTX(t1 + dt), MinY + dy, MaxY + dy);
+        }
+
+        private static double LinearMinX(double maxX) => -LeftMargin * Math.Max(maxX, 0);
+
+        /// <summary>
+        /// Centres the view on a data point and scales both spans by <paramref name="factor"/>
+        /// (in log space on a log axis). Used for "zoom to selected handle".
+        /// </summary>
+        public void ZoomAround(Point2 data, double factor)
+        {
+            double t0 = TX(MinX), t1 = TX(MaxX);
+            double half = (t1 - t0) * factor / 2;
+            double tc = TX(LogX ? Math.Max(data.X, MinLogX) : data.X);
+            double nt0 = tc - half, nt1 = tc + half;
+
+            if (!LogX && nt0 < LinearMinX(nt1))
+            {
+                // near zero: keep the span and slide right until the margin is respected
+                double span = nt1 - nt0;
+                nt0 = -LeftMargin * span / (1 + LeftMargin);
+                nt1 = nt0 + span;
+            }
+
+            double hy = (MaxY - MinY) * factor / 2;
+            SetWindow(InvTX(nt0), InvTX(nt1), data.Y - hy, data.Y + hy);
         }
 
         /// <summary> Zooms to a screen rectangle (box zoom). </summary>
@@ -119,6 +156,7 @@ namespace CurveEditor.Core.Interaction
             for (int i = 0; i <= samples; i++)
             {
                 double x = ScreenToX(Left + Width * i / samples);
+                if (x <= 0) continue;
                 double y = curve(x);
                 if (double.IsNaN(y) || double.IsInfinity(y)) continue;
                 lo = Math.Min(lo, y);
@@ -169,7 +207,10 @@ namespace CurveEditor.Core.Interaction
                 yield break;
             }
 
-            foreach (var t in LinearTicks(MinX, MaxX, target)) yield return t;
+            foreach (var t in LinearTicks(MinX, MaxX, target))
+            {
+                if (t >= 0) yield return t;
+            }
         }
 
         public IEnumerable<double> YTicks(int target = 8) => LinearTicks(MinY, MaxY, target);

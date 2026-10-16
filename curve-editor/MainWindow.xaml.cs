@@ -156,7 +156,13 @@ namespace CurveEditor
             if (dialog.ShowDialog() == true) vm.DevicesChanged();
         }
 
-        private void OnKindSensitivity(object sender, RoutedEventArgs e) => SetKind(ChartKind.Sensitivity);
+        private void OnZoomToHandle(object sender, RoutedEventArgs e)
+        {
+            if (!Chart.ZoomToSelected()) vm.Status = "Select a handle first (click it), then zoom.";
+            Chart.Focus();
+        }
+
+                private void OnKindSensitivity(object sender, RoutedEventArgs e) => SetKind(ChartKind.Sensitivity);
 
         private void OnKindVelocity(object sender, RoutedEventArgs e) => SetKind(ChartKind.Velocity);
 

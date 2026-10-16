@@ -635,6 +635,11 @@ namespace CurveEditor.ViewModels
         public void AddPoint(Point2 p)
         {
             if (!IsLookup) return;
+            if (p.X <= 0)
+            {
+                Status = "Points need a speed above zero.";
+                return;
+            }
             var next = CurrentArgs.Clone();
             int index = LookupHandles.AddPoint(next, p);
             if (index < 0)
@@ -868,7 +873,7 @@ namespace CurveEditor.ViewModels
         public void ResetView()
         {
             double maxX = DefaultMaxX();
-            view.SetWindow(view.LogX ? maxX / 1000 : 0, maxX, 0.5, 2);
+            view.SetWindow(view.LogX ? maxX / 1000 : -0.04 * maxX, maxX, 0.5, 2);
             RecomputeContext();
             Fit();
         }
@@ -889,6 +894,7 @@ namespace CurveEditor.ViewModels
                 for (int i = 0; i <= 50; i++)
                 {
                     double x = view.ScreenToX(view.Left + view.Width * i / 50);
+                    if (x <= 0) continue;
                     extra.Add(new Point2(x, value(ghost, x)));
                 }
             }

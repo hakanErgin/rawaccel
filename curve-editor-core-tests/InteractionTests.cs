@@ -151,5 +151,63 @@ namespace CurveEditor.Core.Tests
             u.Push(3);
             Assert.IsFalse(u.CanRedo);
         }
+
+        [TestMethod]
+        public void LinearAxisLeavesRoomLeftOfZero()
+        {
+            var v = MakeView(false);
+            v.SetWindow(-100, 100, 0.5, 2.5);
+            Assert.AreEqual(-ViewState.LeftMargin * 100, v.MinX, 1e-12, "clamped to the margin, not to 0");
+
+            v.SetWindow(-2, 100, 0.5, 2.5);
+            Assert.AreEqual(-2, v.MinX, 1e-12, "small negative start allowed");
+
+            // a handle at x = 0.00025 is inside the plot, not on its edge
+            Assert.IsTrue(v.XToScreen(0.00025) > v.Left + 10);
+
+            Assert.IsTrue(v.XTicks().All(t => t >= 0), "no negative speed labels");
+        }
+
+        [TestMethod]
+        public void PanStopsAtLeftMarginKeepingSpan()
+        {
+            var v = MakeView(false);
+            v.SetWindow(0, 100, 0.5, 2.5);
+            v.Pan(10000, 0);
+            Assert.AreEqual(100, v.MaxX - v.MinX, 1e-9);
+            Assert.AreEqual(-ViewState.LeftMargin * v.MaxX, v.MinX, 1e-9);
+        }
+
+        [DataTestMethod]
+        [DataRow(false)]
+        [DataRow(true)]
+        public void ZoomAroundCentresAndShrinks(bool logX)
+        {
+            var v = MakeView(logX);
+            var p = new Point2(40, 1.7);
+            double spanY = v.MaxY - v.MinY;
+            v.ZoomAround(p, 0.1);
+
+            var s = v.ToScreen(p);
+            Assert.AreEqual(v.Left + v.Width / 2, s.X, 1e-6);
+            Assert.AreEqual(v.Top + v.Height / 2, s.Y, 1e-6);
+            Assert.AreEqual(spanY * 0.1, v.MaxY - v.MinY, 1e-9);
+        }
+
+        [TestMethod]
+        public void ZoomAroundTinyOffsetKeepsItInView()
+        {
+            var v = MakeView(false);
+            v.SetWindow(-12, 300, 0.8, 3.4);
+            var offset = new Point2(0.00025, 1);
+            double before = HandleInteraction.NudgeStep(v, offset, 1).X;
+
+            v.ZoomAround(offset, 0.1);
+            v.ZoomAround(offset, 0.1);
+
+            Assert.IsTrue(v.MinX < offset.X && offset.X < v.MaxX);
+            Assert.IsTrue(v.XToScreen(offset.X) > v.Left + 10, "handle not pinned to the edge");
+            Assert.AreEqual(before / 100, HandleInteraction.NudgeStep(v, offset, 1).X, before * 1e-6);
+        }
     }
 }

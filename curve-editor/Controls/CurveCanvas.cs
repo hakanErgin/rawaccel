@@ -53,6 +53,7 @@ namespace CurveEditor.Controls
     /// Interactive chart: draws the curve, the last-applied ("ghost") curve and the handles, and turns
     /// mouse and keyboard input into handle moves. Precision features:
     ///   wheel = zoom at cursor (Shift: x only, Ctrl: y only), right-drag = box zoom,
+    ///   Z or double-click a handle = zoom 10x around it,
     ///   left/middle-drag on empty space = pan, F = fit, Home = reset view;
     ///   dragging is relative, Shift = 1/10 speed, Shift+Ctrl = 1/100, Alt = lock to one axis;
     ///   arrows nudge the selected handle (Shift finer, Ctrl coarser), Tab cycles handles.
@@ -191,12 +192,29 @@ namespace CurveEditor.Controls
         private FormattedText Text(string s, double size, Brush brush) =>
             new FormattedText(s, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, Face, size, brush, Dpi);
 
-        /// <summary> Screen position of a handle, pinned inside the plot horizontally (e.g. x = 0 on a log axis). </summary>
+        private const double EdgeInset = 8;
+
+        /// <summary>
+        /// Screen position of a handle. A handle left or right of the view (e.g. x = 0 on a log axis)
+        /// is pinned a little inside the plot so it stays visible and grabbable.
+        /// </summary>
         private Point HandleScreen(Handle h)
         {
             var s = View.ToScreen(h.Position);
-            double x = double.IsNaN(s.X) ? View.Left : Math.Max(View.Left, Math.Min(View.Left + View.Width, s.X));
+            double left = View.Left, right = View.Left + View.Width;
+            double x = s.X;
+            if (double.IsNaN(x) || x < left) x = left + EdgeInset;
+            else if (x > right) x = right - EdgeInset;
             return new Point(x, s.Y);
+        }
+
+        /// <summary> Zooms 10x around the selected handle. Returns false if nothing is selected. </summary>
+        public bool ZoomToSelected()
+        {
+            var sel = Find(SelectedHandleId);
+            if (sel == null || !HandlesVisible) return false;
+            View.ZoomAround(sel.Position, 0.1);
+            return true;
         }
 
         protected override void OnRender(DrawingContext dc)
@@ -288,7 +306,12 @@ namespace CurveEditor.Controls
                 {
                     double sx = View.Left + i;
                     double x = View.ScreenToX(sx);
-                    if (x <= 0) x = 1e-9;
+                    // speeds below zero don't exist; the axis only extends there for handle room
+                    if (x <= 0)
+                    {
+                        open = false;
+                        continue;
+                    }
                     double y = Value(curve, x);
 
                     if (double.IsNaN(y) || double.IsInfinity(y))
@@ -458,6 +481,14 @@ namespace CurveEditor.Controls
                 if (e.ClickCount == 2 && hit == null)
                 {
                     AddPointRequested?.Invoke(this, new ChartPointEventArgs(View.ToData(P(p))));
+                    e.Handled = true;
+                    return;
+                }
+
+                if (e.ClickCount == 2 && hit != null)
+                {
+                    Select(hit.Id);
+                    ZoomToSelected();
                     e.Handled = true;
                     return;
                 }
@@ -660,6 +691,10 @@ namespace CurveEditor.Controls
                     return;
                 case Key.Home:
                     ResetViewRequested?.Invoke(this, EventArgs.Empty);
+                    e.Handled = true;
+                    return;
+                case Key.Z when !ctrl:
+                    ZoomToSelected();
                     e.Handled = true;
                     return;
                 case Key.OemPlus:

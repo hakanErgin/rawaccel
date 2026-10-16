@@ -165,7 +165,7 @@
                     <Expander Header="Precision controls" Margin="0,10,0,0" IsExpanded="True">
                         <TextBlock Style="{StaticResource Hint}" FontSize="11.5" Margin="0,6,0,0" LineHeight="17">
                             <Run FontWeight="SemiBold" Text="Zoom" />
-                            <Run Text="  wheel at cursor · Shift+wheel: speed axis · Ctrl+wheel: sensitivity axis · right-drag: box zoom · F: fit · Home: reset" />
+                            <Run Text="  wheel at cursor · Shift+wheel: speed axis · Ctrl+wheel: sensitivity axis · right-drag: box zoom · Z or double-click a handle: zoom 10× around it · F: fit · Home: reset" />
                             <LineBreak />
                             <Run FontWeight="SemiBold" Text="Pan" />
                             <Run Text="  drag empty space (left or middle button)" />
@@ -195,6 +195,7 @@
                     <CheckBox Content="Log speed axis" Foreground="#C9CDD4" IsChecked="{Binding LogX}" VerticalAlignment="Center" Margin="0,0,18,0" />
                     <Button Content="Fit (F)" Command="{Binding FitCommand}" />
                     <Button Content="Reset view (Home)" Command="{Binding ResetViewCommand}" />
+                    <Button Content="Zoom to handle (Z)" Click="OnZoomToHandle" ToolTip="Zoom 10× around the selected handle (or double-click a handle) for finer drags and nudges" />
                     <TextBlock Text="  ─ current   ┄ applied   ● live mouse" Foreground="#8A9099" VerticalAlignment="Center" Margin="10,0,0,0" />
                 </StackPanel>
             </Border>
