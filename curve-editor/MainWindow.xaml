@@ -190,7 +190,7 @@
         <!-- chart -->
         <DockPanel>
             <Border DockPanel.Dock="Top" Background="#1B1D21" Padding="10,6">
-                <StackPanel Orientation="Horizontal">
+                <WrapPanel Orientation="Horizontal">
                     <TextBlock Text="Show" Foreground="#C9CDD4" VerticalAlignment="Center" Margin="0,0,8,0" />
                     <RadioButton Content="Sensitivity" Foreground="#C9CDD4" GroupName="kind" Margin="0,0,10,0" VerticalAlignment="Center" Checked="OnKindSensitivity" IsChecked="True" />
                     <RadioButton Content="Velocity" Foreground="#C9CDD4" GroupName="kind" Margin="0,0,10,0" VerticalAlignment="Center" Checked="OnKindVelocity" />
@@ -199,11 +199,11 @@
                     <CheckBox Content="Peak (5 s)" Foreground="#C9CDD4" IsChecked="True" VerticalAlignment="Center" Margin="0,0,18,0"
                               Checked="OnShowPeakChanged" Unchecked="OnShowPeakChanged"
                               ToolTip="Mark the fastest mouse speed of the last 5 seconds on the applied curve. It stays after you stop moving, so you can check a swipe afterwards." />
-                    <Button Content="Fit (F)" Command="{Binding FitCommand}" />
-                    <Button Content="Reset view (Home)" Command="{Binding ResetViewCommand}" />
-                    <Button Content="Zoom to handle (Z)" Click="OnZoomToHandle" ToolTip="Zoom 10× around the selected handle (or double-click a handle) for finer drags and nudges" />
+                    <Button Margin="0,2,6,2" Content="Fit (F)" Command="{Binding FitCommand}" />
+                    <Button Margin="0,2,6,2" Content="Reset view (Home)" Command="{Binding ResetViewCommand}" />
+                    <Button Margin="0,2,6,2" Content="Zoom to handle (Z)" Click="OnZoomToHandle" ToolTip="Zoom 10× around the selected handle (or double-click a handle) for finer drags and nudges" />
                     <TextBlock Text="  ─ current   ┄ applied   ● live mouse   ┆ 5 s peak" Foreground="#8A9099" VerticalAlignment="Center" Margin="10,0,0,0" />
-                </StackPanel>
+                </WrapPanel>
             </Border>
             <c:CurveCanvas x:Name="Chart" />
         </DockPanel>
