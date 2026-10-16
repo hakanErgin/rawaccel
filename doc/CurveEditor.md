@@ -4,7 +4,16 @@ The curve editor is an alternative to the Raw Accel GUI. Instead of typing coeff
 
 ![Curve editor with a capped classic curve: the cap handle was just raised, the dashed line is the last applied curve](images/curve-editor.png)
 
-Put `rawaccel-editor.exe` and `curve-editor-core.dll` in the Raw Accel folder, next to `wrapper.dll` and `settings.json`, then run it. Nothing reaches the driver until you press **Apply** (Ctrl+S). Apply validates the settings, writes `settings.json`, and sends them to the driver.
+Nothing reaches the driver until you press **Apply** (Ctrl+S). Apply validates the settings, writes `settings.json`, and sends them to the driver.
+
+## Install
+
+1. Install the Raw Accel driver from the [official releases](https://github.com/RawAccelOfficial/rawaccel/releases), if you haven't already.
+2. Download `rawaccel-editor-x64.zip` from the [curve editor preview release](https://github.com/hakanErgin/rawaccel/releases/tag/curve-editor-preview).
+3. Back up your Raw Accel folder's `wrapper.dll`, then copy everything from the zip into that folder, replacing files when asked.
+4. Run `rawaccel-editor.exe`. If Windows SmartScreen warns, choose **More info → Run anyway** (the preview isn't code-signed).
+
+(The branch's "Download ZIP" is source code; it has to be built with Visual Studio before it can run.)
 
 ## The chart
 

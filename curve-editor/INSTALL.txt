@@ -1,0 +1,19 @@
+Raw Accel Curve Editor (preview)
+================================
+
+1. Install the Raw Accel driver first, if you haven't:
+   https://github.com/RawAccelOfficial/rawaccel/releases
+   Unzip it, run installer.exe, and reboot.
+
+2. Back up wrapper.dll in your Raw Accel folder (the folder with rawaccel.exe
+   and settings.json).
+
+3. Copy every file from this zip into that folder. Replace wrapper.dll and
+   Newtonsoft.Json.dll when asked; the old rawaccel.exe keeps working with them.
+
+4. Run rawaccel-editor.exe. If Windows shows "Windows protected your PC", click
+   More info, then Run anyway (the preview isn't code-signed).
+
+The editor opens your current settings.json. Nothing is sent to the driver
+until you press Apply. Usage guide:
+https://github.com/hakanErgin/rawaccel/blob/claude/intelligent-allen-hss1qe/doc/CurveEditor.md
