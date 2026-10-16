@@ -13,7 +13,37 @@ namespace CurveEditor.Core.Interaction
         public static double DragFactor(bool shift, bool ctrl) => shift ? (ctrl ? 0.01 : 0.1) : 1;
 
         /// <summary> Nudge scale: Shift = 10x finer, Ctrl = 10x coarser. </summary>
-        public static double NudgeFactor(bool shift, bool ctrl) => shift ? 0.1 : (ctrl ? 10 : 1);
+        public static double NudgeFactor(bool shift, bool ctrl) => shift ? (ctrl ? 0.01 : 0.1) : (ctrl ? 10 : 1);
+
+        /// <summary>
+        /// Step for adjusting a value by its own size: one unit in the third significant digit
+        /// (0.00025 steps by 0.000001, 12.3 by 0.1). Near zero, falls back to 1/1000 of the visible span.
+        /// </summary>
+        public static double ValueStep(double value, double visibleSpan)
+        {
+            double mag = Math.Abs(value);
+            if (mag < 1e-12) return Math.Max(visibleSpan, 1e-9) * 1e-3;
+            return Math.Pow(10, Math.Floor(Math.Log10(mag)) - 2);
+        }
+
+        /// <summary>
+        /// Target for Alt+wheel: moves the handle's main coordinate (x for XOnly handles, otherwise y,
+        /// or x when <paramref name="horizontal"/> is set on a free handle) by whole value steps.
+        /// </summary>
+        public static Point2 ValueStepTarget(ViewState view, Point2 handle, HandleConstraint constraint, int direction, double factor, bool horizontal)
+        {
+            bool useX = constraint == HandleConstraint.XOnly || (constraint == HandleConstraint.Free && horizontal);
+            if (useX)
+            {
+                double step = ValueStep(handle.X, view.MaxX - view.MinX) * factor;
+                return new Point2(Math.Round(handle.X / step + direction) * step, handle.Y);
+            }
+            else
+            {
+                double step = ValueStep(handle.Y, view.MaxY - view.MinY) * factor;
+                return new Point2(handle.X, Math.Round(handle.Y / step + direction) * step);
+            }
+        }
 
         /// <summary>
         /// Target position for a relative drag: the handle moves by the mouse delta (in screen space)

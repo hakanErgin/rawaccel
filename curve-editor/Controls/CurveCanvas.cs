@@ -56,7 +56,8 @@ namespace CurveEditor.Controls
     ///   Z or double-click a handle = zoom 10x around it,
     ///   left/middle-drag on empty space = pan, F = fit, Home = reset view;
     ///   dragging is relative, Shift = 1/10 speed, Shift+Ctrl = 1/100, Alt = lock to one axis;
-    ///   arrows nudge the selected handle (Shift finer, Ctrl coarser), Tab cycles handles.
+    ///   arrows nudge the selected handle (Shift 10x finer, Shift+Ctrl 100x, Ctrl coarser), Tab cycles handles;
+    ///   Alt+wheel steps the selected handle by its own value (Shift finer, Ctrl = x on free handles).
     /// </summary>
     public sealed class CurveCanvas : FrameworkElement
     {
@@ -646,9 +647,21 @@ namespace CurveEditor.Controls
             base.OnMouseWheel(e);
             if (drag == DragMode.Handle) return;
 
-            double f = e.Delta > 0 ? 0.8 : 1.25;
             bool shift = (Keyboard.Modifiers & ModifierKeys.Shift) != 0;
             bool ctrl = (Keyboard.Modifiers & ModifierKeys.Control) != 0;
+            bool alt = (Keyboard.Modifiers & ModifierKeys.Alt) != 0;
+
+            // Alt+wheel: step the selected handle by its own value (third significant digit)
+            var sel = Find(SelectedHandleId);
+            if (alt && sel != null && HandlesVisible)
+            {
+                var target = HandleInteraction.ValueStepTarget(View, sel.Position, sel.Constraint, e.Delta > 0 ? 1 : -1, shift ? 0.1 : 1, horizontal: ctrl);
+                HandleMoved?.Invoke(this, new HandleMovedEventArgs(sel.Id, target, true));
+                e.Handled = true;
+                return;
+            }
+
+            double f = e.Delta > 0 ? 0.8 : 1.25;
             View.ZoomAt(P(e.GetPosition(this)), ctrl ? 1 : f, shift ? 1 : f);
             e.Handled = true;
         }

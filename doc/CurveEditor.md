@@ -49,7 +49,8 @@ Classic and power curves are saved using the `output` cap mode. Curves loaded wi
 | Fit / reset | **F** fits the view to the curve: the speed range is widened or narrowed so every handle is inside it, then the sensitivity range is fitted. **Home** resets the view. |
 | Fine drag | Hold **Shift** for 1/10 of the mouse movement, or **Shift+Ctrl** for 1/100. Drags are relative, so grabbing a handle never makes it jump. You can press or release the modifiers mid-drag. |
 | Lock an axis | Hold **Alt** while dragging. |
-| Nudge | Click a handle, then use the arrow keys. One press moves 1/200 of the visible range, so zooming in makes the steps smaller. Shift makes it 10× finer, Ctrl 10× coarser. **Tab** selects the next handle. The status bar shows the exact step size. |
+| Nudge | Click a handle, then use the arrow keys. One press moves 1/200 of the visible range, so zooming in makes the steps smaller. Shift makes it 10× finer, Shift+Ctrl 100× finer, Ctrl 10× coarser. **Tab** selects the next handle. The status bar shows the exact step size. |
+| Tiny values | Select a handle and use **Alt+mouse wheel** over the chart: each notch changes the handle's value by one unit in its third significant digit, regardless of zoom (an offset of 0.00025 moves by 0.000001). **Alt+Shift+wheel** is 10× finer. On a handle that moves in both directions, **Alt+Ctrl+wheel** changes the speed instead of the sensitivity. |
 | Exact values | Type into a field and press Enter. With a field focused, the mouse wheel or Up/Down steps the third significant digit (Shift finer, Ctrl coarser). |
 | Undo | Ctrl+Z / Ctrl+Y. A burst of arrow-key nudges on the same handle counts as one undo step. **Revert** returns to the last applied settings. |
 

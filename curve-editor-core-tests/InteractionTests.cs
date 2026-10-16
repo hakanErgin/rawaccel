@@ -209,5 +209,39 @@ namespace CurveEditor.Core.Tests
             Assert.IsTrue(v.XToScreen(offset.X) > v.Left + 10, "handle not pinned to the edge");
             Assert.AreEqual(before / 100, HandleInteraction.NudgeStep(v, offset, 1).X, before * 1e-6);
         }
+
+        [TestMethod]
+        public void ShiftCtrlNudgeIsHundredTimesFiner()
+        {
+            Assert.AreEqual(0.01, HandleInteraction.NudgeFactor(shift: true, ctrl: true), 1e-15);
+            Assert.AreEqual(0.1, HandleInteraction.NudgeFactor(shift: true, ctrl: false), 1e-15);
+            Assert.AreEqual(10, HandleInteraction.NudgeFactor(shift: false, ctrl: true), 1e-15);
+        }
+
+        [TestMethod]
+        public void ValueStepFollowsTheValueNotTheZoom()
+        {
+            Assert.AreEqual(1e-6, HandleInteraction.ValueStep(0.00025, 300), 1e-18);
+            Assert.AreEqual(0.1, HandleInteraction.ValueStep(12.3, 300), 1e-12);
+            Assert.AreEqual(0.3, HandleInteraction.ValueStep(0, 300), 1e-12, "zero falls back to the view span");
+
+            var v = MakeView(false);
+            v.SetWindow(-12, 300, 0.8, 3.4);
+            var offset = new Point2(0.00025, 1);
+
+            var up = HandleInteraction.ValueStepTarget(v, offset, Handles.HandleConstraint.XOnly, 1, 1, horizontal: false);
+            Assert.AreEqual(0.000251, up.X, 1e-12);
+            Assert.AreEqual(1, up.Y);
+
+            var fine = HandleInteraction.ValueStepTarget(v, offset, Handles.HandleConstraint.XOnly, -1, 0.1, horizontal: false);
+            Assert.AreEqual(0.0002499, fine.X, 1e-12);
+
+            var cap = new Point2(200, 3.25);
+            var capUp = HandleInteraction.ValueStepTarget(v, cap, Handles.HandleConstraint.Free, 1, 1, horizontal: false);
+            Assert.AreEqual(3.26, capUp.Y, 1e-12);
+            Assert.AreEqual(200, capUp.X);
+            var capRight = HandleInteraction.ValueStepTarget(v, cap, Handles.HandleConstraint.Free, 1, 1, horizontal: true);
+            Assert.AreEqual(201, capRight.X, 1e-9);
+        }
     }
 }

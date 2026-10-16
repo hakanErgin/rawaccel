@@ -174,7 +174,10 @@
                             <Run Text="  hold Shift (1/10 speed) or Shift+Ctrl (1/100) · Alt locks to one axis" />
                             <LineBreak />
                             <Run FontWeight="SemiBold" Text="Nudge" />
-                            <Run Text="  select a handle, then arrow keys · Shift: 10× finer · Ctrl: 10× coarser · Tab: next handle" />
+                            <Run Text="  select a handle, then arrow keys · Shift: 10× finer · Shift+Ctrl: 100× finer · Ctrl: 10× coarser · Tab: next handle" />
+                            <LineBreak />
+                            <Run FontWeight="SemiBold" Text="Tiny values" />
+                            <Run Text="  Alt+wheel steps the selected handle by its own size (e.g. 0.00025 → 0.000251) · Alt+Shift+wheel: 10× finer · Alt+Ctrl+wheel: horizontal" />
                             <LineBreak />
                             <Run FontWeight="SemiBold" Text="Exact values" />
                             <Run Text="  type in the fields, or scroll/arrow inside a field (Shift finer, Ctrl coarser)" />
