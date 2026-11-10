@@ -117,4 +117,14 @@ jobs:
           if gh release view "$tag" > /dev/null 2>&1; then
             gh release delete "$tag" --yes --cleanup-tag
           fi
+          # a tag left behind by a hand-deleted release would make create reuse it at its old commit
+          if gh api "repos/$GH_REPO/git/ref/tags/$tag" > /dev/null 2>&1; then
+            gh api -X DELETE "repos/$GH_REPO/git/refs/tags/$tag"
+          fi
           gh release create "$tag" rawaccel-editor-x64.zip curve-editor.png --prerelease --target "$GITHUB_SHA" --title "Curve editor preview" --notes "Preview build of the Raw Accel curve editor from commit $GITHUB_SHA. Download rawaccel-editor-x64.zip and follow INSTALL.txt inside it."
+          # fail visibly if the release ended up on another commit (e.g. a lookup above failed)
+          tagged=$(gh api "repos/$GH_REPO/commits/$tag" --jq .sha)
+          if [ "$tagged" != "$GITHUB_SHA" ]; then
+            echo "::error::release tag $tag points at $tagged, not $GITHUB_SHA"
+            exit 1
+          fi
