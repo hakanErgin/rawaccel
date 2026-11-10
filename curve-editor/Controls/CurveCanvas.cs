@@ -96,6 +96,8 @@ namespace CurveEditor.Controls
         private DragMode drag;
         private string dragId;
         private Point2 dragStartData;
+        private Point2 dragRealStart;
+        private bool dragPinned;
         private Point dragStartMouse;
         private double dragFactor;
         private bool dragAxisLock;
@@ -514,6 +516,14 @@ namespace CurveEditor.Controls
         protected override void OnMouseDown(MouseButtonEventArgs e)
         {
             base.OnMouseDown(e);
+
+            // a second button during a drag would leave the first drag unfinished
+            if (drag != DragMode.None)
+            {
+                e.Handled = true;
+                return;
+            }
+
             Focus();
             var p = e.GetPosition(this);
             lastMouse = p;
@@ -544,7 +554,7 @@ namespace CurveEditor.Controls
                     Select(hit.Id);
                     drag = DragMode.Handle;
                     dragId = hit.Id;
-                    dragStartData = hit.Position;
+                    StartFrom(hit);
                     dragStartMouse = p;
                     dragFactor = CurrentDragFactor();
                     dragAxisLock = AxisLock();
@@ -570,6 +580,20 @@ namespace CurveEditor.Controls
                 CaptureMouse();
                 e.Handled = true;
             }
+        }
+
+        /// <summary>
+        /// Drag origin for a handle. One pinned at the plot edge drags from where it is drawn,
+        /// not from its real (off-screen) position, so it responds immediately.
+        /// </summary>
+        private void StartFrom(Handle h)
+        {
+            dragRealStart = h.Position;
+            dragStartData = h.Position;
+            var drawn = HandleScreen(h);
+            double realScreenX = View.XToScreen(h.Position.X);
+            dragPinned = double.IsNaN(realScreenX) || Math.Abs(drawn.X - realScreenX) > 0.5;
+            if (dragPinned) dragStartData = new Point2(View.ScreenToX(drawn.X), h.Position.Y);
         }
 
         private static double CurrentDragFactor() =>
@@ -598,13 +622,15 @@ namespace CurveEditor.Controls
                     if (factor != dragFactor || axisLock != dragAxisLock)
                     {
                         // precision changed mid-drag: continue from where the handle is now
-                        dragStartData = h.Position;
+                        StartFrom(h);
                         dragStartMouse = p;
                         dragFactor = factor;
                         dragAxisLock = axisLock;
                     }
 
                     var target = HandleInteraction.DragTarget(View, dragStartData, P(dragStartMouse), P(p), factor, axisLock, h.Constraint);
+                    // no sideways movement yet: keep the pinned handle's real speed
+                    if (dragPinned && target.X == dragStartData.X) target = new Point2(dragRealStart.X, target.Y);
                     HandleMoved?.Invoke(this, new HandleMovedEventArgs(dragId, target, false));
                     break;
                 }

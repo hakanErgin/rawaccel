@@ -25,13 +25,21 @@ namespace CurveEditor
 
         public bool Override { get => overrideDefaults; set => Set(ref overrideDefaults, value); }
 
-        public bool Disable { get => disable; set => Set(ref disable, value); }
+        /// <summary> Set once the row is filled in; from then on, editing a value turns on Override. </summary>
+        public bool Ready { get; set; }
 
-        public int Dpi { get => dpi; set => Set(ref dpi, value < 0 ? 0 : value); }
+        private void Edited()
+        {
+            if (Ready && !overrideDefaults) Override = true;
+        }
 
-        public int PollingRate { get => pollingRate; set => Set(ref pollingRate, value < 0 ? 0 : value); }
+        public bool Disable { get => disable; set { if (Set(ref disable, value)) Edited(); } }
 
-        public string Profile { get => profile; set => Set(ref profile, value); }
+        public int Dpi { get => dpi; set { if (Set(ref dpi, value < 0 ? 0 : value)) Edited(); } }
+
+        public int PollingRate { get => pollingRate; set { if (Set(ref pollingRate, value < 0 ? 0 : value)) Edited(); } }
+
+        public string Profile { get => profile; set { if (Set(ref profile, value)) Edited(); } }
     }
 
     /// <summary> Per-device settings; same rules as grapher/DeviceMenuForm.cs and SettingsManager.Submit. </summary>
@@ -93,6 +101,7 @@ namespace CurveEditor
                 Dpi = cfg.dpi,
                 PollingRate = cfg.pollingRate,
                 Profile = string.IsNullOrEmpty(profile) || !ProfileNames.Contains(profile) ? FirstProfileLabel : profile,
+                Ready = true,
             };
         }
 
@@ -108,6 +117,9 @@ namespace CurveEditor
 
         private void OnOk(object sender, RoutedEventArgs e)
         {
+            // finish any cell still being edited
+            Grid.CommitEdit(System.Windows.Controls.DataGridEditingUnit.Row, true);
+
             var defaults = config.defaultDeviceConfig;
             defaults.disable = DefaultDisable;
             defaults.dpi = System.Math.Max(0, DefaultDpi);

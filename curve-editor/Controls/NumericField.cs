@@ -52,14 +52,23 @@ namespace CurveEditor.Controls
             set => SetValue(MaximumProperty, value);
         }
 
+        private string shownText;
+
         private void ShowValue()
         {
-            Text = Value.ToString("G7", CultureInfo.InvariantCulture);
+            shownText = Value.ToString("G7", CultureInfo.InvariantCulture);
+            Text = shownText;
             ClearValue(BorderBrushProperty);
         }
 
+        /// <summary> Commits typed text (e.g. before Ctrl+S applies). Untouched text is left alone. </summary>
+        public void CommitPending() => Commit();
+
         private void Commit()
         {
+            // the box shows the value rounded to 7 digits; leaving it untouched must not round the real value
+            if (Text == shownText) return;
+
             if (double.TryParse(Text, NumberStyles.Float, CultureInfo.InvariantCulture, out double v) && !double.IsNaN(v) && !double.IsInfinity(v))
             {
                 SetClamped(v);

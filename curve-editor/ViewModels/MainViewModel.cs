@@ -190,6 +190,7 @@ namespace CurveEditor.ViewModels
 
             devicesDirty = false;
             deletedNames.Clear();
+            capStash.Clear();
             selected = null;
             SelectedProfile = Profiles.FirstOrDefault();
         }
@@ -207,6 +208,7 @@ namespace CurveEditor.ViewModels
                 editingY = false;
                 selectedHandleId = null;
                 handleX.Clear();
+                lastNudgeId = null;
                 OnPropertyChanged(nameof(EditingY));
                 RebuildParameters();
                 RefreshAll();
@@ -218,7 +220,8 @@ namespace CurveEditor.ViewModels
 
         public CurveArgs CurrentArgs => State == null ? null : (editingY && State.Separate ? State.Y : State.X);
 
-        public CurveArgs AppliedArgs => selected?.Applied == null ? null : (editingY && State.Separate ? selected.Applied.Y : selected.Applied.X);
+        /// <summary> The applied curve the driver uses for the axis being edited (Y only if the applied profile was by-component). </summary>
+        public CurveArgs AppliedArgs => selected?.Applied == null ? null : (editingY && selected.Applied.Separate ? selected.Applied.Y : selected.Applied.X);
 
         /// <summary> Display multiplier: base sensitivity (and Y/X ratio for the vertical curve), or 1 for the bare curve. </summary>
         private double ScaleOf(ProfileState s) =>
@@ -236,7 +239,22 @@ namespace CurveEditor.ViewModels
         public ICurve Ghost => AppliedArgs == null ? null : new ScaledCurve(CurveMath.Create(AppliedArgs), AppliedScale);
 
         /// <summary> Applied curve without the display multiplier (what the driver evaluates). </summary>
-        private ICurve RawGhost => AppliedArgs == null ? null : CurveMath.Create(AppliedArgs);
+        private CurveArgs rawGhostArgs;
+        private ICurve rawGhost;
+
+        private ICurve RawGhost
+        {
+            get
+            {
+                var a = AppliedArgs;
+                if (!ReferenceEquals(a, rawGhostArgs))
+                {
+                    rawGhostArgs = a;
+                    rawGhost = a == null ? null : CurveMath.Create(a);
+                }
+                return rawGhost;
+            }
+        }
 
         /// <summary> Handles in chart coordinates (y scaled like the curve). </summary>
         public IReadOnlyList<Handle> Handles
@@ -247,7 +265,7 @@ namespace CurveEditor.ViewModels
                 var raw = HandleSets.For(CurrentArgs.Mode).GetHandles(CurrentArgs, Context);
                 double k = CurrentScale;
                 if (k == 1) return raw;
-                return raw.Select(h => new Handle(h.Id, h.Label, new Point2(h.Position.X, h.Position.Y * k), h.Constraint, h.Description, h.Affects.ToArray()) { Kind = h.Kind }).ToList();
+                return raw.Select(h => new Handle(h.Id, h.Label, new Point2(h.Position.X, h.Position.Y * k), h.Constraint, h.Description, h.Affects.ToArray()) { Kind = h.Kind, SlidesAlongCurve = h.SlidesAlongCurve }).ToList();
             }
         }
 
@@ -354,6 +372,7 @@ namespace CurveEditor.ViewModels
                 if (!Set(ref editingY, value)) return;
                 selectedHandleId = null;
                 handleX.Clear();
+                lastNudgeId = null;
                 RebuildParameters();
                 RefreshAll();
                 ResetView();
@@ -458,6 +477,8 @@ namespace CurveEditor.ViewModels
                 if (!IsLookup) return;
                 if (!TryParseLut(value, out var points, out string error))
                 {
+                    // keep what was typed so it can be corrected instead of retyped
+                    lutText = value;
                     Status = error;
                     OnPropertyChanged();
                     return;
@@ -485,7 +506,7 @@ namespace CurveEditor.ViewModels
                     error = $"Could not read point \"{entry.Trim()}\"; use x,y;x,y;…";
                     return false;
                 }
-                if (x <= 0 || y <= 0 || (points.Count > 0 && x <= points[points.Count - 1].X))
+                if (!HandleSets.Finite(x) || !HandleSets.Finite(y) || x <= 0 || y <= 0 || (points.Count > 0 && x <= points[points.Count - 1].X))
                 {
                     error = "Points need positive values and strictly increasing speeds.";
                     return false;
@@ -538,6 +559,11 @@ namespace CurveEditor.ViewModels
                 {
                     // start the vertical curve as a copy of the horizontal one
                     next.Y = next.X.Clone();
+                }
+                else if (!value && !selected.Applied.Separate)
+                {
+                    // the driver ignores Y in combined mode; drop the copy so the profile isn't left "changed"
+                    next.Y = selected.Applied.Y;
                 }
                 selected.Current = next;
                 editingY = false;
@@ -639,7 +665,11 @@ namespace CurveEditor.ViewModels
                 next = HandleSets.For(mode).Normalize(new CurveArgs { Mode = mode, Gain = prev.Gain, ControlPoints = next.ControlPoints, SmoothLut = next.SmoothLut });
             }
 
-            ReplaceCurve(next, pushUndo: true, what: "mode");
+            if (!ReplaceCurve(next, pushUndo: true, what: "mode"))
+            {
+                RefreshAll();
+                return;
+            }
             selectedHandleId = null;
             handleX.Clear();
             if (mode == CurveMode.Synchronous && !view.LogX) LogX = true;
@@ -658,7 +688,7 @@ namespace CurveEditor.ViewModels
             next.Mode = CurveMode.Lookup;
             next.ControlPoints = LookupHandles.SampleCurve(prev, Math.Max(view.MaxX, 10), 14);
             next.SmoothLut = true;
-            ReplaceCurve(next, pushUndo: true, what: "custom curve");
+            if (!ReplaceCurve(next, pushUndo: true, what: "custom curve")) return;
             selectedHandleId = null;
             handleX.Clear();
             RebuildParameters();
@@ -670,24 +700,52 @@ namespace CurveEditor.ViewModels
         {
             dragging = true;
             dragPushed = false;
+            dragStartArgs = CurrentArgs;
+            dragStartPosition = Handles.FirstOrDefault(h => h.Id == id)?.Position;
             SelectedHandleId = id;
         }
+
+        private CurveArgs dragStartArgs;
+        private Point2? dragStartPosition;
 
         public void MoveHandle(string id, Point2 target, bool isNudge)
         {
             if (CurrentArgs == null) return;
 
             var handle = Handles.FirstOrDefault(h => h.Id == id);
-            bool slid = handle != null && handle.SlidesAlongCurve && target.X != handle.Position.X;
+            if (handle == null) return;
 
-            var next = HandleSets.For(CurrentArgs.Mode).Drag(CurrentArgs, id, ToCurveSpace(target), Context);
+            var ctx = Context;
+            bool slides = handle.SlidesAlongCurve;
 
-            // sliding a handle along the curve moves where it sits, even if no parameter changes
-            if (handle != null && handle.SlidesAlongCurve) handleX[id] = target.X;
+            // where the move started: the drag's start (drags are relative), or the handle now (nudges)
+            var baseArgs = dragging && dragStartArgs != null ? dragStartArgs : CurrentArgs;
+            var start = dragging && dragStartPosition.HasValue ? dragStartPosition.Value : handle.Position;
+            bool sideways = slides && target.X != start.X;
+
+            if (sideways)
+            {
+                // slide along the curve: horizontal movement keeps the curve, only the vertical part changes the value
+                ctx = WithChosenX(ctx, id, target.X);
+                if (handle.Kind != HandleKind.Level)
+                {
+                    double onCurve = CurveMath.Sensitivity(baseArgs, target.X) * CurrentScale;
+                    target = new Point2(target.X, onCurve + (target.Y - start.Y));
+                }
+            }
+
+            var next = HandleSets.For(CurrentArgs.Mode).Drag(CurrentArgs, id, ToCurveSpace(target), ctx);
+
+            if (sideways)
+            {
+                // remember the speed the handle is actually drawn at (the handle set clamps it)
+                var placed = HandleSets.For(next.Mode).GetHandles(next, ctx).FirstOrDefault(h => h.Id == id);
+                if (placed != null) handleX[id] = placed.Position.X;
+            }
 
             if (next.Equals(CurrentArgs))
             {
-                if (slid) RefreshAll(parametersOnly: true);
+                if (sideways) RefreshAll(parametersOnly: true);
                 return;
             }
 
@@ -712,9 +770,23 @@ namespace CurveEditor.ViewModels
             RefreshAll(parametersOnly: true);
         }
 
+        private static HandleContext WithChosenX(HandleContext ctx, string id, double x)
+        {
+            var chosen = new Dictionary<string, double>();
+            foreach (var hid in new[] { HandleIds.Point, HandleIds.Bend, HandleIds.Smooth, HandleIds.Limit, HandleIds.Motivity })
+            {
+                double v = ctx.X(hid, double.NaN);
+                if (!double.IsNaN(v)) chosen[hid] = v;
+            }
+            chosen[id] = x;
+            return new HandleContext(ctx.AnchorX, ctx.EdgeX, chosen);
+        }
+
         public void EndDrag(string id)
         {
             dragging = false;
+            dragStartArgs = null;
+            dragStartPosition = null;
             RefreshAll();
         }
 
@@ -782,14 +854,31 @@ namespace CurveEditor.ViewModels
         {
             Push();
             selected.Current = selected.Applied;
-            selected.Name = selected.AppliedName;
+            string status = "Reverted to the last applied settings.";
+
+            string oldName = selected.AppliedName;
+            if (oldName != null && oldName != selected.Name)
+            {
+                if (Profiles.Any(p => p != selected && p.Name == oldName))
+                {
+                    status += $" The name stays \"{selected.Name}\" because another profile is now called \"{oldName}\".";
+                }
+                else
+                {
+                    foreach (var d in Config.devices.Where(d => d.profile == selected.Name)) d.profile = oldName;
+                    selected.Name = oldName;
+                }
+            }
+
             AfterHistoryChange();
-            Status = "Reverted to the last applied settings.";
+            Status = status;
         }
 
         private void AfterHistoryChange()
         {
             if (!State.Separate) editingY = false;
+            if (HandleIds.TryParseLutPoint(selectedHandleId, out _)) selectedHandleId = null;
+            lastNudgeId = null;
             OnPropertyChanged(nameof(EditingY));
             RebuildParameters();
             RefreshAll();
@@ -1046,7 +1135,7 @@ namespace CurveEditor.ViewModels
             }
 
             view.FitY(x => value(curve, x), extra);
-            if (chartKind != ChartKind.Sensitivity && view.MinY < 0 && chartKind == ChartKind.Velocity)
+            if (chartKind == ChartKind.Velocity && view.MinY < 0)
             {
                 view.SetWindow(view.MinX, view.MaxX, 0, view.MaxY);
             }
@@ -1084,6 +1173,7 @@ namespace CurveEditor.ViewModels
 
         public void AddProfile()
         {
+            if (BlockedByApply()) return;
             string name = PromptForText?.Invoke("New profile", "Name for the new profile (starts as a copy of the current one):", UniqueName(selected?.Name ?? "profile"));
             if (string.IsNullOrWhiteSpace(name)) return;
             name = name.Trim();
@@ -1108,6 +1198,7 @@ namespace CurveEditor.ViewModels
 
         public void RenameProfile()
         {
+            if (BlockedByApply()) return;
             if (selected == null) return;
             string name = PromptForText?.Invoke("Rename profile", "New name:", selected.Name);
             if (string.IsNullOrWhiteSpace(name)) return;
@@ -1130,6 +1221,7 @@ namespace CurveEditor.ViewModels
 
         private void DeleteProfile()
         {
+            if (BlockedByApply()) return;
             if (Profiles.Count <= 1) return;
             var victim = selected;
             int index = Profiles.IndexOf(victim);
@@ -1142,6 +1234,7 @@ namespace CurveEditor.ViewModels
             }
 
             if (victim.AppliedName != null) deletedNames.Add(victim.AppliedName);
+            foreach (var k in capStash.Keys.Where(k => k.Item1 == victim).ToList()) capStash.Remove(k);
 
             int configIndex = Config.profiles.IndexOf(victim.Profile);
             Config.profiles.RemoveAt(configIndex);
@@ -1189,6 +1282,7 @@ namespace CurveEditor.ViewModels
         /// <summary> Moves the selected profile to the front, where every unassigned device picks it up. </summary>
         private void MakeDefault()
         {
+            if (BlockedByApply()) return;
             int index = Profiles.IndexOf(selected);
             if (index <= 0) return;
             var editor = selected;
@@ -1241,6 +1335,16 @@ namespace CurveEditor.ViewModels
                 : "Couldn't apply settings on startup: " + error;
         }
 
+        /// <summary> True (with a status message) while Apply is writing to the driver. </summary>
+        public bool BlockedByApply()
+        {
+            if (!applying) return false;
+            Status = "Please wait until Apply has finished.";
+            return true;
+        }
+
+        public bool IsApplying => applying;
+
         public void DevicesChanged()
         {
             devicesDirty = true;
@@ -1262,6 +1366,18 @@ namespace CurveEditor.ViewModels
                     Config.SetProfileAt(i, editor.Profile);
                 }
 
+                string invalid = Config.Errors();
+                if (invalid != null)
+                {
+                    Status = invalid;
+                    System.Windows.MessageBox.Show(invalid, "Raw Accel", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
+                    return;
+                }
+
+                // what is being written; edits made while the driver write runs stay unapplied
+                var written = Profiles.Select(e => (Editor: e, State: e.Current, Name: e.Name)).ToList();
+                var deletedNow = deletedNames.ToList();
+
                 var sidecar = settings.Sidecar;
                 foreach (var name in deletedNames) sidecar.Profiles.Remove(name);
                 foreach (var editor in Profiles)
@@ -1282,13 +1398,13 @@ namespace CurveEditor.ViewModels
                     return;
                 }
 
-                foreach (var editor in Profiles)
+                foreach (var w in written)
                 {
-                    editor.Applied = editor.Current;
-                    editor.AppliedName = editor.Name;
+                    w.Editor.Applied = w.State;
+                    w.Editor.AppliedName = w.Name;
                 }
                 devicesDirty = false;
-                deletedNames.Clear();
+                foreach (var name in deletedNow) deletedNames.Remove(name);
                 Status = $"Applied at {DateTime.Now:T} and saved to {settings.SettingsPath}";
             }
             catch (Exception e)

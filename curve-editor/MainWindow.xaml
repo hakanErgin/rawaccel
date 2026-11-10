@@ -13,7 +13,6 @@
         <KeyBinding Key="Z" Modifiers="Control" Command="{Binding UndoCommand}" />
         <KeyBinding Key="Y" Modifiers="Control" Command="{Binding RedoCommand}" />
         <KeyBinding Key="Z" Modifiers="Control+Shift" Command="{Binding RedoCommand}" />
-        <KeyBinding Key="S" Modifiers="Control" Command="{Binding ApplyCommand}" />
     </Window.InputBindings>
 
     <DockPanel>

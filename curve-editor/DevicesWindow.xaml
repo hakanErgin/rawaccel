@@ -9,14 +9,14 @@
             <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
                 <CheckBox Content="Disable by default" IsChecked="{Binding DefaultDisable}" VerticalAlignment="Center" Margin="0,0,18,0" />
                 <TextBlock Text="DPI" VerticalAlignment="Center" Margin="0,0,6,0" />
-                <TextBox Text="{Binding DefaultDpi}" Width="70" Margin="0,0,18,0"
+                <TextBox Text="{Binding DefaultDpi, UpdateSourceTrigger=PropertyChanged}" Width="70" Margin="0,0,18,0"
                          ToolTip="Normalizes input speed to inches/second (0 = off)" />
                 <TextBlock Text="Polling rate (Hz)" VerticalAlignment="Center" Margin="0,0,6,0" />
-                <TextBox Text="{Binding DefaultPollingRate}" Width="70"
+                <TextBox Text="{Binding DefaultPollingRate, UpdateSourceTrigger=PropertyChanged}" Width="70"
                          ToolTip="0 = measure automatically" />
             </StackPanel>
             <TextBlock Text="Connected devices" FontWeight="SemiBold" Margin="0,0,0,6" />
-            <TextBlock Text="Tick Override to give a device its own DPI, polling rate or profile. Devices without an override (or with no profile chosen) use the first profile."
+            <TextBlock Text="Changing a device's values ticks Override for it. Devices without an override (or with no profile chosen) use the first profile."
                        Foreground="#5F6670" TextWrapping="Wrap" Margin="0,0,0,8" />
         </StackPanel>
 
@@ -25,21 +25,20 @@
             <Button Content="Cancel" IsCancel="True" MinWidth="80" Margin="0" />
         </StackPanel>
 
-        <DataGrid ItemsSource="{Binding Rows}" AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False"
+        <DataGrid x:Name="Grid" ItemsSource="{Binding Rows}" AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False"
                   HeadersVisibility="Column" GridLinesVisibility="Horizontal" SelectionMode="Single">
             <DataGrid.Columns>
                 <DataGridTextColumn Header="Device" Binding="{Binding Name}" IsReadOnly="True" Width="2*" />
                 <DataGridTextColumn Header="ID" Binding="{Binding Id}" IsReadOnly="True" Width="2*" />
                 <DataGridCheckBoxColumn Header="Override" Binding="{Binding Override, UpdateSourceTrigger=PropertyChanged}" Width="Auto" />
                 <DataGridCheckBoxColumn Header="Disable" Binding="{Binding Disable, UpdateSourceTrigger=PropertyChanged}" Width="Auto" />
-                <DataGridTextColumn Header="DPI" Binding="{Binding Dpi}" Width="70" />
-                <DataGridTextColumn Header="Polling rate" Binding="{Binding PollingRate}" Width="90" />
+                <DataGridTextColumn Header="DPI" Binding="{Binding Dpi, UpdateSourceTrigger=PropertyChanged}" Width="70" />
+                <DataGridTextColumn Header="Polling rate" Binding="{Binding PollingRate, UpdateSourceTrigger=PropertyChanged}" Width="90" />
                 <DataGridTemplateColumn Header="Profile" Width="*">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
                             <ComboBox ItemsSource="{Binding DataContext.ProfileNames, RelativeSource={RelativeSource AncestorType=Window}}"
-                                      SelectedItem="{Binding Profile, UpdateSourceTrigger=PropertyChanged}"
-                                      IsEnabled="{Binding Override}" />
+                                      SelectedItem="{Binding Profile, UpdateSourceTrigger=PropertyChanged}" />
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>

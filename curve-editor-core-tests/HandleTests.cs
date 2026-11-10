@@ -307,5 +307,19 @@ namespace CurveEditor.Core.Tests
             var after = HandleSets.For(CurveMode.Classic).Drag(args, HandleIds.Point, new Point2(12, 1.4), Ctx);
             Assert.AreEqual(1.4, HandleSets.Eval(after, 12), 1e-9, "curve passes through the point at the new speed");
         }
+
+        [TestMethod]
+        public void SlidingBendAlongCurveKeepsCurve()
+        {
+            foreach (bool capped in new[] { true, false })
+            {
+                var args = HandleSets.For(CurveMode.Classic).Normalize(new CurveArgs { Mode = CurveMode.Classic, Acceleration = 0.02, ExponentClassic = 2.4, CapY = capped ? 1.6 : 0, CapMode = CapType.Output });
+                var bend = Find(args, HandleIds.Bend).Position;
+                double x = bend.X * 0.6;
+                // what the editor sends for a purely sideways slide: the new speed at the curve's own height
+                var after = HandleSets.For(CurveMode.Classic).Drag(args, HandleIds.Bend, new Point2(x, HandleSets.Eval(args, x)), Ctx);
+                AssertSameCurve(args, after, 1e-6);
+            }
+        }
     }
 }

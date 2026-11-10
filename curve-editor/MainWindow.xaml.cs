@@ -2,6 +2,7 @@ using System;
 using System.ComponentModel;
 using System.Windows;
 using System.IO;
+using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -64,6 +65,7 @@ namespace CurveEditor
 
             Loaded += OnLoaded;
             Closing += OnClosing;
+            Closed += (s, e) => rawInput?.Dispose();
         }
 
         private async void OnLoaded(object sender, RoutedEventArgs e)
@@ -155,15 +157,41 @@ namespace CurveEditor
                 e.Cancel = true;
                 return;
             }
-            rawInput?.Dispose();
         }
 
         private void OnAddProfile(object sender, RoutedEventArgs e) => vm.AddProfile();
 
         private void OnRenameProfile(object sender, RoutedEventArgs e) => vm.RenameProfile();
 
+        protected override void OnPreviewKeyDown(KeyEventArgs e)
+        {
+            // Ctrl+S: commit the field being typed in first, so the typed value is what gets applied
+            if (e.Key == Key.S && (Keyboard.Modifiers & ModifierKeys.Control) != 0)
+            {
+                CommitFocusedField();
+                if (vm.ApplyCommand.CanExecute(null)) vm.ApplyCommand.Execute(null);
+                e.Handled = true;
+                return;
+            }
+            base.OnPreviewKeyDown(e);
+        }
+
+        private static void CommitFocusedField()
+        {
+            switch (Keyboard.FocusedElement)
+            {
+                case NumericField field:
+                    field.CommitPending();
+                    break;
+                case System.Windows.Controls.TextBox box:
+                    box.GetBindingExpression(System.Windows.Controls.TextBox.TextProperty)?.UpdateSource();
+                    break;
+            }
+        }
+
         private void OnDevices(object sender, RoutedEventArgs e)
         {
+            if (vm.BlockedByApply()) return;
             var dialog = new DevicesWindow(vm.Config, vm.Profiles) { Owner = this };
             if (dialog.ShowDialog() == true) vm.DevicesChanged();
         }
@@ -181,7 +209,7 @@ namespace CurveEditor
             Chart.Focus();
         }
 
-                private void OnKindSensitivity(object sender, RoutedEventArgs e) => SetKind(ChartKind.Sensitivity);
+        private void OnKindSensitivity(object sender, RoutedEventArgs e) => SetKind(ChartKind.Sensitivity);
 
         private void OnKindVelocity(object sender, RoutedEventArgs e) => SetKind(ChartKind.Velocity);
 
