@@ -321,5 +321,27 @@ namespace CurveEditor.Core.Tests
                 AssertSameCurve(args, after, 1e-6);
             }
         }
+
+        [TestMethod]
+        public void ClassicUnityIoCapStaysValid()
+        {
+            // a flat io-capped curve (cap y = 1) is valid in the driver; loading or dragging it must keep it valid
+            foreach (bool gain in new[] { true, false })
+            {
+                var original = new CurveArgs { Mode = CurveMode.Classic, Gain = gain, Acceleration = 0.005, CapX = 20, CapY = 1, CapMode = CapType.InOut, InputOffset = 2 };
+                Assert.AreEqual(0, Validation.Validate(original).Count, "original");
+
+                var set = HandleSets.For(CurveMode.Classic);
+                var n = set.Normalize(original);
+                Assert.AreEqual(0, Validation.Validate(n).Count, $"normalized gain={gain}: {string.Join(", ", Validation.Validate(n))}");
+                AssertSameCurve(original, n, 1e-9);
+
+                foreach (var h in set.GetHandles(n, Ctx))
+                {
+                    var after = set.Drag(n, h.Id, new Point2(h.Position.X * 1.1, h.Position.Y), Ctx);
+                    Assert.AreEqual(0, Validation.Validate(after).Count, $"drag {h.Id} gain={gain}: {string.Join(", ", Validation.Validate(after))}");
+                }
+            }
+        }
     }
 }

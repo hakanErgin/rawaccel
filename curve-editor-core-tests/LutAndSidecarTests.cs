@@ -145,5 +145,37 @@ namespace CurveEditor.Core.Tests
                 File.Delete(path);
             }
         }
+
+        [TestMethod]
+        public void AtomicWriteReplacesAndLeavesNoTempFile()
+        {
+            string dir = Path.Combine(Path.GetTempPath(), "atomic-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            try
+            {
+                string path = Path.Combine(dir, "settings.json");
+                AtomicFile.WriteAllText(path, "first");
+                Assert.AreEqual("first", File.ReadAllText(path));
+                AtomicFile.WriteAllText(path, "second, longer contents");
+                Assert.AreEqual("second, longer contents", File.ReadAllText(path));
+                CollectionAssert.AreEquivalent(new[] { path }, Directory.GetFiles(dir));
+            }
+            finally
+            {
+                Directory.Delete(dir, true);
+            }
+        }
+
+        [TestMethod]
+        public void SidecarCopyDoesNotShareProfileList()
+        {
+            var original = new CustomCurveSidecar { ApplyOnStartup = false };
+            original.Profiles["a"] = new CustomCurveSidecar.ProfileEntry();
+            var copy = original.Copy();
+            copy.Profiles.Remove("a");
+            copy.Profiles["b"] = new CustomCurveSidecar.ProfileEntry();
+            Assert.IsFalse(copy.ApplyOnStartup);
+            CollectionAssert.AreEquivalent(new[] { "a" }, original.Profiles.Keys.ToList());
+        }
     }
 }

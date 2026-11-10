@@ -40,6 +40,7 @@ namespace CurveEditor
 
             Chart.HandleSelected += (s, e) => vm.SelectedHandleId = e.Id;
             Chart.HandleDragStarted += (s, e) => vm.BeginDrag(e.Id);
+            Chart.HandleDragRebased += (s, e) => vm.RebaseDrag(e.Id);
             Chart.HandleMoved += (s, e) => vm.MoveHandle(e.Id, e.Target, e.IsNudge);
             Chart.HandleDragCompleted += (s, e) => vm.EndDrag(e.Id);
             Chart.AddPointRequested += (s, e) => vm.AddPoint(e.Point);
@@ -124,8 +125,10 @@ namespace CurveEditor
             }
         }
 
-        private void OnRawMouse(double dx, double dy, double timeMs)
+        private void OnRawMouse(IntPtr device, double dx, double dy, double timeMs)
         {
+            // other mice may use other profiles (or none): only show movement this profile handles
+            if (!vm.UsesSelectedProfile(device)) return;
             var speed = vm.LiveInputSpeed(dx, dy, timeMs);
             if (speed == null) return;
             Chart.LiveSpeed = speed;

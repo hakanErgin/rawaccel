@@ -178,7 +178,7 @@ namespace CurveEditor.Core.Handles
             switch (args.CapMode)
             {
                 case CapType.InOut:
-                    n.Acceleration = AccelFromCapPoint(args.Gain, args.CapX, Math.Abs(args.CapY - 1), p, off);
+                    n.Acceleration = KeepPositive(AccelFromCapPoint(args.Gain, args.CapX, Math.Abs(args.CapY - 1), p, off), args.Acceleration);
                     break;
                 case CapType.Input:
                     if (args.CapX > 0)
@@ -249,7 +249,7 @@ namespace CurveEditor.Core.Handles
                     if (capped)
                     {
                         // keep the cap point where it is
-                        a.Acceleration = AccelFromCapPoint(a.Gain, capStart, Math.Abs(a.CapY - 1), p, newOff);
+                        a.Acceleration = KeepPositive(AccelFromCapPoint(a.Gain, capStart, Math.Abs(a.CapY - 1), p, newOff), a.Acceleration);
                     }
                     return a;
                 }
@@ -258,7 +258,7 @@ namespace CurveEditor.Core.Handles
                     double x = Math.Max(target.X, a.InputOffset + Math.Max(1e-3, a.InputOffset * 1e-3));
                     double y = HandleSets.AwayFromOne(Math.Max(target.Y, 1e-4));
                     a.CapY = y;
-                    a.Acceleration = AccelFromCapPoint(a.Gain, x, Math.Abs(y - 1), p, a.InputOffset);
+                    a.Acceleration = KeepPositive(AccelFromCapPoint(a.Gain, x, Math.Abs(y - 1), p, a.InputOffset), a.Acceleration);
                     return a;
                 }
                 case HandleIds.Point:
@@ -289,7 +289,7 @@ namespace CurveEditor.Core.Handles
                     {
                         trial.ExponentClassic = exp;
                         trial.Acceleration = capped
-                            ? AccelFromCapPoint(a.Gain, refX, Math.Abs(refY - 1), exp, a.InputOffset)
+                            ? KeepPositive(AccelFromCapPoint(a.Gain, refX, Math.Abs(refY - 1), exp, a.InputOffset), a.Acceleration)
                             : AccelFromPoint(refX, refY, exp, a.InputOffset);
                         return HandleSets.Eval(trial, xb);
                     }
@@ -325,6 +325,13 @@ namespace CurveEditor.Core.Handles
             Math.Pow(x * (y - 1) * Math.Pow(x - off, -p), 1 / (p - 1));
 
         /// <summary> Acceleration that makes the cap (output mode, level 1 ± c) begin at speed x. </summary>
+        /// <summary>
+        /// A cap level of exactly 1 (c = 0) makes the curve flat whatever the acceleration, and the
+        /// cap-point formula then returns 0, which the driver rejects. Keep the previous value then.
+        /// </summary>
+        private static double KeepPositive(double accel, double previous) =>
+            accel > 0 && !double.IsInfinity(accel) ? accel : previous;
+
         private static double AccelFromCapPoint(bool gain, double x, double c, double p, double off) =>
             gain ? ClassicGain.GainAccel(x, c, p, off)
                  : Math.Pow(x * c * Math.Pow(x - off, -p), 1 / (p - 1));

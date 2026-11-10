@@ -78,7 +78,14 @@ namespace CurveEditor
             }
             catch (Exception ex)
             {
-                File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "curve-editor-error.log"), ex.ToString());
+                try
+                {
+                    File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "curve-editor-error.log"), ex.ToString());
+                }
+                catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+                {
+                    // nowhere to report it; the exit code still says it failed
+                }
             }
             Shutdown(code);
         }

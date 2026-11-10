@@ -80,6 +80,19 @@ namespace CurveEditor.Services
             Sidecar = new CustomCurveSidecar();
         }
 
+        /// <summary> The settings the driver is using right now, or null if they can't be read. </summary>
+        public static DriverConfig TryGetActive()
+        {
+            try
+            {
+                return DriverConfig.GetActive();
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
         /// <summary> True when settings.json existed and was loaded without problems. </summary>
         public bool LoadedFromFile => File.Exists(SettingsPath) && LoadWarning == null;
 
@@ -109,13 +122,18 @@ namespace CurveEditor.Services
             }
         }
 
-        /// <summary> Validates, writes settings.json and the sidecar, then sends the config to the driver. </summary>
-        public async Task<string> ApplyAsync()
+        /// <summary>
+        /// Validates, writes settings.json and <paramref name="sidecar"/>, then sends the config to the
+        /// driver. <paramref name="sidecar"/> replaces <see cref="Sidecar"/> only once settings.json is written.
+        /// </summary>
+        public async Task<string> ApplyAsync(CustomCurveSidecar sidecar)
         {
             string errors = Config.Errors();
             if (errors != null) return errors;
 
-            File.WriteAllText(SettingsPath, Config.ToJSON());
+            AtomicFile.WriteAllText(SettingsPath, Config.ToJSON());
+            sidecar.ApplyOnStartup = Sidecar.ApplyOnStartup;
+            Sidecar = sidecar;
 
             try
             {

@@ -159,6 +159,8 @@ namespace CurveEditor.Controls
 
         public event EventHandler<HandleEventArgs> HandleSelected;
         public event EventHandler<HandleEventArgs> HandleDragStarted;
+        /// <summary> The drag continues from the handle's current position (precision or axis lock changed). </summary>
+        public event EventHandler<HandleEventArgs> HandleDragRebased;
         public event EventHandler<HandleMovedEventArgs> HandleMoved;
         public event EventHandler<HandleEventArgs> HandleDragCompleted;
         public event EventHandler<HandleEventArgs> RemoveRequested;
@@ -626,6 +628,7 @@ namespace CurveEditor.Controls
                         dragStartMouse = p;
                         dragFactor = factor;
                         dragAxisLock = axisLock;
+                        HandleDragRebased?.Invoke(this, new HandleEventArgs(dragId));
                     }
 
                     var target = HandleInteraction.DragTarget(View, dragStartData, P(dragStartMouse), P(p), factor, axisLock, h.Constraint);

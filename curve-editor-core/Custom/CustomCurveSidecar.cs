@@ -22,6 +22,13 @@ namespace CurveEditor.Core
         [JsonProperty("profiles")]
         public Dictionary<string, ProfileEntry> Profiles { get; set; } = new Dictionary<string, ProfileEntry>();
 
+        /// <summary> A copy whose profile list can be changed without touching this one (entries are shared). </summary>
+        public CustomCurveSidecar Copy() => new CustomCurveSidecar
+        {
+            ApplyOnStartup = ApplyOnStartup,
+            Profiles = new Dictionary<string, ProfileEntry>(Profiles),
+        };
+
         public sealed class CurveEntry
         {
             [JsonProperty("smooth")]
@@ -57,7 +64,7 @@ namespace CurveEditor.Core
             return new CustomCurveSidecar();
         }
 
-        public void Save(string path) => File.WriteAllText(path, JsonConvert.SerializeObject(this, Formatting.Indented));
+        public void Save(string path) => AtomicFile.WriteAllText(path, JsonConvert.SerializeObject(this, Formatting.Indented));
 
         public static CurveEntry ToEntry(CurveArgs a) => new CurveEntry
         {

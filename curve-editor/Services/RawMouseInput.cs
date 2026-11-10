@@ -37,8 +37,11 @@ namespace CurveEditor.Services
             }
         }
 
-        /// <summary> Raised with the output movement (counts) and the time since the previous report (ms). </summary>
-        public event Action<double, double, double> Moved;
+        /// <summary>
+        /// Raised with the reporting device's raw input handle, the output movement (counts) and the
+        /// time since the previous report (ms).
+        /// </summary>
+        public event Action<IntPtr, double, double, double> Moved;
 
         private IntPtr Hook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
         {
@@ -62,7 +65,7 @@ namespace CurveEditor.Services
             time = Math.Min(time, 100);
             time = Math.Max(time, 0.125);
 
-            Moved?.Invoke(input.Mouse.LastX, input.Mouse.LastY, time);
+            Moved?.Invoke(input.Header.Device, input.Mouse.LastX, input.Mouse.LastY, time);
             return IntPtr.Zero;
         }
 

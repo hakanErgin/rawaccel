@@ -90,6 +90,7 @@ namespace CurveEditor.ViewModels
         private bool applying;
         private string lutText = "";
         private readonly List<string> deletedNames = new List<string>();
+        private readonly List<(ProfileEditor Editor, ProfileState State)> loadedStates = new List<(ProfileEditor, ProfileState)>();
         private readonly Dictionary<(ProfileEditor, bool), double> capStash = new Dictionary<(ProfileEditor, bool), double>();
 
         public MainViewModel(SettingsService settings, ViewState view)
@@ -110,7 +111,7 @@ namespace CurveEditor.ViewModels
 
             ApplyCommand = new RelayCommand(async () => await ApplyAsync(), () => !applying);
             MakeDefaultCommand = new RelayCommand(MakeDefault, () => selected != null && Profiles.IndexOf(selected) > 0);
-            RevertCommand = new RelayCommand(Revert, () => selected != null && selected.IsDirty);
+            RevertCommand = new RelayCommand(Revert, () => selected?.Applied != null && selected.IsDirty);
             UndoCommand = new RelayCommand(Undo, () => selected?.History.CanUndo == true);
             RedoCommand = new RelayCommand(Redo, () => selected?.History.CanRedo == true);
             FitCommand = new RelayCommand(Fit);
@@ -181,11 +182,25 @@ namespace CurveEditor.ViewModels
         private void LoadProfiles()
         {
             Profiles.Clear();
+            loadedStates.Clear();
+
+            // settings.json may not be what the driver runs (apply-on-open off, or the driver rejected it):
+            // until it is activated, the ghost curve shows the driver's profile of the same name
+            var active = settings.LoadedFromFile ? SettingsService.TryGetActive() : null;
 
             foreach (var p in settings.Config.profiles)
             {
                 settings.Sidecar.Profiles.TryGetValue(p.name, out var saved);
-                Profiles.Add(new ProfileEditor(p, ProfileState.FromProfile(p, saved)));
+                var state = ProfileState.FromProfile(p, saved);
+                var editor = new ProfileEditor(p, state);
+                if (active != null)
+                {
+                    var running = active.profiles.FirstOrDefault(a => a.name == p.name);
+                    settings.Sidecar.Profiles.TryGetValue(p.name, out var savedRunning);
+                    editor.Applied = running == null ? null : ProfileState.FromProfile(running, savedRunning);
+                }
+                loadedStates.Add((editor, state));
+                Profiles.Add(editor);
             }
 
             devicesDirty = false;
@@ -560,7 +575,7 @@ namespace CurveEditor.ViewModels
                     // start the vertical curve as a copy of the horizontal one
                     next.Y = next.X.Clone();
                 }
-                else if (!value && !selected.Applied.Separate)
+                else if (!value && selected.Applied != null && !selected.Applied.Separate)
                 {
                     // the driver ignores Y in combined mode; drop the copy so the profile isn't left "changed"
                     next.Y = selected.Applied.Y;
@@ -703,6 +718,17 @@ namespace CurveEditor.ViewModels
             dragStartArgs = CurrentArgs;
             dragStartPosition = Handles.FirstOrDefault(h => h.Id == id)?.Position;
             SelectedHandleId = id;
+        }
+
+        /// <summary>
+        /// The view restarted the drag from where the handle is now (precision changed mid-drag):
+        /// move the baseline with it, but keep the drag a single undo step.
+        /// </summary>
+        public void RebaseDrag(string id)
+        {
+            if (!dragging) return;
+            dragStartArgs = CurrentArgs;
+            dragStartPosition = Handles.FirstOrDefault(h => h.Id == id)?.Position;
         }
 
         private CurveArgs dragStartArgs;
@@ -852,6 +878,8 @@ namespace CurveEditor.ViewModels
 
         private void Revert()
         {
+            // null when the driver isn't running this profile (settings.json not applied yet)
+            if (selected?.Applied == null) return;
             Push();
             selected.Current = selected.Applied;
             string status = "Reverted to the last applied settings.";
@@ -865,7 +893,11 @@ namespace CurveEditor.ViewModels
                 }
                 else
                 {
-                    foreach (var d in Config.devices.Where(d => d.profile == selected.Name)) d.profile = oldName;
+                    foreach (var d in Config.devices.Where(d => d.profile == selected.Name))
+                    {
+                        d.profile = oldName;
+                        devicesDirty = true;
+                    }
                     selected.Name = oldName;
                 }
             }
@@ -1155,16 +1187,70 @@ namespace CurveEditor.ViewModels
             var applied = selected?.Applied;
             if (applied == null) return null;
 
-            double counts = applied.Separate ? Math.Abs(editingY ? dy : dx) : Math.Sqrt(dx * dx + dy * dy);
-            double factor = applied.Sensitivity * (applied.Separate && editingY ? applied.YXRatio : 1);
-            if (factor <= 0 || counts == 0) return null;
+            // undo the driver's per-axis output multipliers (applied after the curve) before measuring speed
+            double lr = dx < 0 ? applied.LRRatio : 1;
+            double ud = dy < 0 ? applied.UDRatio : 1;
+            if (lr <= 0 || ud <= 0 || applied.YXRatio <= 0 || applied.Sensitivity <= 0) return null;
+            double ux = dx / lr;
+            double uy = dy / (applied.YXRatio * ud);
 
-            double outSpeed = counts / timeMs / factor;
+            // same distance the driver uses (rawaccel.hpp calc_speed_whole); the curve scales both axes equally
+            double ax = Math.Abs(ux), ay = Math.Abs(uy), p = applied.LpNorm;
+            double counts = applied.Separate ? (editingY ? ay : ax)
+                : p >= 16 || p <= 0 ? Math.Max(ax, ay)
+                : p == 2 ? Math.Sqrt(ax * ax + ay * ay)
+                : Math.Pow(Math.Pow(ax, p) + Math.Pow(ay, p), 1 / p);
+            if (counts == 0) return null;
+
+            double outSpeed = counts / timeMs / applied.Sensitivity;
             var ghost = RawGhost;
             if (ghost == null) return null;
 
             double v = Solver.Bisect(x => ghost.Velocity(x), outSpeed, 1e-4, 1e5, logScale: true, clamp: false);
             return double.IsNaN(v) ? (double?)null : v;
+        }
+
+        private IList<MultiHandleDevice> systemDevices;
+        private DateTime systemDevicesListed;
+
+        /// <summary>
+        /// True when movement from this raw input device goes through the selected profile. Same
+        /// rules as grapher SettingsManager.SetActiveHandles, using the editor's device settings.
+        /// </summary>
+        public bool UsesSelectedProfile(IntPtr handle)
+        {
+            if (selected == null || Config == null) return false;
+            var device = FindDevice(handle);
+            if (device == null) return false;
+
+            bool selectedIsFirst = Config.profiles.Count > 0 && Config.profiles[0] == selected.Profile;
+            var assigned = Config.devices.FirstOrDefault(d => d.id == device.id);
+
+            if (assigned == null) return selectedIsFirst && !Config.defaultDeviceConfig.disable;
+            if (assigned.config.disable) return false;
+            if (assigned.profile == selected.Name) return true;
+
+            // an empty or unknown profile name falls back to the first profile
+            return selectedIsFirst && (string.IsNullOrEmpty(assigned.profile) || Profiles.All(p => p.Name != assigned.profile));
+        }
+
+        private MultiHandleDevice FindDevice(IntPtr handle)
+        {
+            var found = systemDevices?.FirstOrDefault(d => d.handles != null && d.handles.Contains(handle));
+            if (found != null) return found;
+
+            // unknown handle: maybe a mouse plugged in since the last listing (re-list at most every 2 s)
+            if (systemDevices != null && (DateTime.UtcNow - systemDevicesListed).TotalSeconds < 2) return null;
+            systemDevicesListed = DateTime.UtcNow;
+            try
+            {
+                systemDevices = MultiHandleDevice.GetList();
+            }
+            catch (Exception)
+            {
+                systemDevices = new List<MultiHandleDevice>();
+            }
+            return systemDevices.FirstOrDefault(d => d.handles != null && d.handles.Contains(handle));
         }
 
         #endregion
@@ -1329,7 +1415,18 @@ namespace CurveEditor.ViewModels
         public async Task ActivateOnStartupAsync()
         {
             if (!settings.Sidecar.ApplyOnStartup || !settings.LoadedFromFile) return;
+            var loaded = loadedStates.ToList();
             string error = await settings.ActivateAsync();
+            if (error == null)
+            {
+                // the driver now runs what was loaded (edits made meanwhile stay unapplied)
+                foreach (var (editor, state) in loaded)
+                {
+                    if (Profiles.Contains(editor)) editor.Applied = state;
+                }
+                RebuildParameters();
+                RefreshAll();
+            }
             Status = error == null
                 ? $"Applied {SettingsService.SettingsFileName} to the driver on startup."
                 : "Couldn't apply settings on startup: " + error;
@@ -1378,7 +1475,8 @@ namespace CurveEditor.ViewModels
                 var written = Profiles.Select(e => (Editor: e, State: e.Current, Name: e.Name)).ToList();
                 var deletedNow = deletedNames.ToList();
 
-                var sidecar = settings.Sidecar;
+                // changed on a copy, so a failed Apply leaves the saved control points as they were
+                var sidecar = settings.Sidecar.Copy();
                 foreach (var name in deletedNames) sidecar.Profiles.Remove(name);
                 foreach (var editor in Profiles)
                 {
@@ -1390,7 +1488,7 @@ namespace CurveEditor.ViewModels
                     if (entry != null) sidecar.Profiles[editor.Name] = entry;
                 }
 
-                string errors = await settings.ApplyAsync();
+                string errors = await settings.ApplyAsync(sidecar);
                 if (errors != null)
                 {
                     Status = errors;
