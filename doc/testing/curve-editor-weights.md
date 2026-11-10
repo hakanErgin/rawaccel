@@ -4,8 +4,10 @@ Checks for the chart changes that make the editor apply a profile's domain and r
 
 ## Get the build
 
-1. Open the pull request's **Checks** tab, pick the latest **curve-editor** run, and download the **rawaccel-editor-x64** artifact under *Artifacts*.
-2. Unzip it and follow `INSTALL.txt` inside.
+Every push to the pull request builds the editor automatically on Windows.
+
+1. Open the pull request's **Checks** tab, pick the latest **curve-editor** run, and download the **preview-release** artifact under *Artifacts* (signed in to GitHub).
+2. Unzip it, then unzip `rawaccel-editor-x64.zip` inside and follow its `INSTALL.txt`: back up `wrapper.dll` in your Raw Accel folder, then copy the files there.
 
 ## Setup
 
