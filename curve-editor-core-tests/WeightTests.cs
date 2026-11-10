@@ -205,6 +205,18 @@ namespace CurveEditor.Core.Tests
         }
 
         [TestMethod]
+        public void JumpInTheCurveIsNotTakenAsAMatch()
+        {
+            // legacy jump: 1 below speed 10, 0.1 above (review repro); output speed 7 comes from 7 or 70, not 10
+            var jump = new Fn(x => x < 10 ? 1 : 0.1);
+            var p = new LiveProfile();
+            var s = LiveInput.Solve(p, jump, false, 7, 0, 1, near: 8.5);
+            Assert.IsNotNull(s);
+            Assert.AreEqual(7, s.Value.Speed, 1e-5);
+            Assert.AreEqual(70, LiveInput.Solve(p, jump, false, 7, 0, 1, near: 60).Value.Speed, 1e-4);
+        }
+
+        [TestMethod]
         public void PeakTrackerKeepsTheTagOfThePeak()
         {
             var t = new PeakTracker(5);

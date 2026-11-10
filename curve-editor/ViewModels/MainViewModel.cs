@@ -1173,13 +1173,16 @@ namespace CurveEditor.ViewModels
             }
 
             double top = DefaultMaxSensitivity;
-            var curve = Curve;
-            for (int i = 0; i <= 200; i++)
+            foreach (var curve in new[] { Curve, VerticalCurve })
             {
-                double x = view.ScreenToX(view.Left + view.Width * i / 200);
-                if (x <= 0) continue;
-                double y = curve.Sensitivity(x);
-                if (HandleSets.Finite(y)) top = Math.Max(top, y * 1.1);
+                if (curve == null) continue;
+                for (int i = 0; i <= 200; i++)
+                {
+                    double x = view.ScreenToX(view.Left + view.Width * i / 200);
+                    if (x <= 0) continue;
+                    double y = curve.Sensitivity(x);
+                    if (HandleSets.Finite(y)) top = Math.Max(top, y * 1.1);
+                }
             }
             view.SetWindow(view.MinX, view.MaxX, 0, top);
             Raise();

@@ -203,7 +203,8 @@ namespace CurveEditor.Core.Curves
                 if (Finite(prevF) && Finite(f) && (prevF - target) * (f - target) <= 0)
                 {
                     double root = Solver.Bisect(velocity, target, prevX, x, logScale: true, clamp: true);
-                    if (Finite(root))
+                    // a jump in the curve also brackets the target: only keep real matches
+                    if (Finite(root) && Math.Abs(velocity(root) - target) <= 1e-6 * Math.Max(target, 1e-9))
                     {
                         if (near == null || !(near > 0)) return root;
                         double d = Math.Abs(Math.Log(root / near.Value));
