@@ -108,10 +108,11 @@ namespace CurveEditor.Core.Curves
     /// <summary> Where a mouse report sits: its input speed and the weights the driver used for its direction. </summary>
     public readonly struct LiveSample
     {
-        public LiveSample(double speed, AxisWeights weights)
+        public LiveSample(double speed, AxisWeights weights, double vertical = 0)
         {
             Speed = speed;
             Weights = weights;
+            Vertical = vertical;
         }
 
         /// <summary> Input speed, measured like the driver's distance mode (before domain weights). </summary>
@@ -119,6 +120,12 @@ namespace CurveEditor.Core.Curves
 
         /// <summary> Weights that apply to this movement's direction (horizontal and vertical blend by angle). </summary>
         public AxisWeights Weights { get; }
+
+        /// <summary>
+        /// One curve for both axes: how vertical the movement was, 0 (horizontal) to 1 (vertical),
+        /// the angle blend the driver uses for range weights. 0 for a by-component profile.
+        /// </summary>
+        public double Vertical { get; }
     }
 
     public static class LiveInput
@@ -142,7 +149,7 @@ namespace CurveEditor.Core.Curves
             double ax = Math.Abs(dx / lr);
             double ay = Math.Abs(dy / (Math.Abs(p.YXRatio) * ud));
 
-            double counts;
+            double counts, vertical = 0;
             AxisWeights weights;
             if (p.Separate)
             {
@@ -159,15 +166,18 @@ namespace CurveEditor.Core.Curves
                 double domain = Distance(ax * Domain(p.DomainX), ay * Domain(p.DomainY), p.LpNorm) / counts;
                 double rx = Range(p.RangeX), ry = Range(p.RangeY);
                 double angle = ay == 0 ? 0 : ax == 0 ? Math.PI / 2 : Math.Atan(ay / ax);
-                double range = rx == ry ? rx : rx + 2 / Math.PI * angle * (ry - rx);
+                vertical = 2 / Math.PI * angle;
+                double range = rx == ry ? rx : rx + vertical * (ry - rx);
                 weights = new AxisWeights(domain, range);
             }
             if (counts == 0) return null;
 
             double outSpeed = counts / timeMs / Math.Abs(p.Sensitivity);
             var curve = new WeightedCurve(axisCurve, weights);
-            double v = Solver.Bisect(x => curve.Velocity(x), outSpeed, 1e-4, 1e5, logScale: true, clamp: false);
-            return double.IsNaN(v) ? (LiveSample?)null : new LiveSample(v, weights);
+            // a range weight above 1 can push the multiplier below 0 (the driver then flips the
+            // output), so match the output's size, not its sign
+            double v = Solver.Bisect(x => Math.Abs(curve.Velocity(x)), outSpeed, 1e-4, 1e5, logScale: true, clamp: false);
+            return double.IsNaN(v) ? (LiveSample?)null : new LiveSample(v, weights, vertical);
         }
 
         /// <summary> rawaccel.hpp calc_speed_whole: max for p ≥ 16 (or ≤ 0), Euclidean for 2, Lp otherwise. </summary>

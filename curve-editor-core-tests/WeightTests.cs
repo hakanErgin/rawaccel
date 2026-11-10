@@ -142,6 +142,23 @@ namespace CurveEditor.Core.Tests
             var v = LiveInput.Solve(p, CurveX, false, vx, vy, 1).Value;
             Assert.AreEqual(p.DomainY, v.Weights.Domain, 1e-12);
             Assert.AreEqual(p.RangeY, v.Weights.Range, 1e-12);
+            Assert.AreEqual(0, h.Vertical, 1e-12);
+            Assert.AreEqual(1, v.Vertical, 1e-12);
+
+            var (dx, dy) = Driver(p, 20, 20, 1);
+            Assert.AreEqual(0.5, LiveInput.Solve(p, CurveX, false, dx, dy, 1).Value.Vertical, 1e-12);
+        }
+
+        [TestMethod]
+        public void NegativeWeightedMultiplierIsStillPlaced()
+        {
+            // constant 0.5 with range 3: the driver scales by 1 + (0.5 − 1)·3 = −0.5 and flips the output
+            var half = new Fn(x => 0.5);
+            var p = new LiveProfile { RangeX = 3, RangeY = 3 };
+            var s = LiveInput.Solve(p, half, false, -10, 0, 1);
+            Assert.IsNotNull(s);
+            Assert.AreEqual(20, s.Value.Speed, 1e-6);
+            Assert.AreEqual(-0.5, new WeightedCurve(half, s.Value.Weights).Sensitivity(s.Value.Speed), 1e-12);
         }
 
         [DataTestMethod]

@@ -60,7 +60,7 @@ namespace CurveEditor
             {
                 peak.Update(clock.Elapsed.TotalSeconds);
                 Chart.PeakSpeed = peak.Peak;
-                Chart.PeakCurve = peak.PeakTag as ICurve;
+                UpdateLiveCurves();
                 Chart.InvalidateVisual();
                 // run until the 5 s peak window has settled
                 if ((DateTime.UtcNow - Chart.LiveTime).TotalSeconds > 5.5) liveTimer.Stop();
@@ -133,17 +133,27 @@ namespace CurveEditor
         {
             var live = vm.PlaceLiveInput(dx, dy, timeMs);
             if (live == null) return;
+            lastLive = live;
             Chart.LiveSpeed = live.Value.Speed;
-            Chart.LiveCurve = live.Value.Curve;
-            peak.Add(clock.Elapsed.TotalSeconds, live.Value.Speed, live.Value.Curve);
+            peak.Add(clock.Elapsed.TotalSeconds, live.Value.Speed, live.Value);
             Chart.PeakSpeed = peak.Peak;
-            Chart.PeakCurve = peak.PeakTag as ICurve;
+            UpdateLiveCurves();
             Chart.LiveTime = DateTime.UtcNow;
             if (!liveTimer.IsEnabled) liveTimer.Start();
         }
 
+        private LiveSample? lastLive;
+
+        /// <summary> Rebuilds the live and peak markers' curves from the current display settings. </summary>
+        private void UpdateLiveCurves()
+        {
+            Chart.LiveCurve = lastLive is LiveSample l ? vm.LiveCurve(l) : null;
+            Chart.PeakCurve = peak.PeakTag is LiveSample p ? vm.LiveCurve(p) : null;
+        }
+
         private void SyncChart()
         {
+            UpdateLiveCurves();
             Chart.Curve = vm.Curve;
             Chart.Ghost = vm.Ghost;
             Chart.VerticalCurve = vm.VerticalCurve;

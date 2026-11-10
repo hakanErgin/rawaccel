@@ -267,8 +267,8 @@ namespace CurveEditor.ViewModels
             new ChartMapping(WeightsOf(selected.Applied, editingY), AppliedScale).Apply(CurveMath.Create(AppliedArgs));
 
         /// <summary>
-        /// One curve for both axes, but different X and Y weights: what vertical movement gets
-        /// (the main curve shows horizontal movement). Null when both directions are the same.
+        /// One curve for both axes, but vertical movement gets something else (other weights, or a
+        /// Y/X ratio): what it gets, since the main curve shows horizontal movement. Null otherwise.
         /// </summary>
         public ICurve VerticalCurve
         {
@@ -276,10 +276,14 @@ namespace CurveEditor.ViewModels
             {
                 if (State == null || State.Separate) return null;
                 var vertical = WeightsOf(State, true);
-                if (vertical.Equals(WeightsOf(State, false))) return null;
-                return new ChartMapping(vertical, CurrentScale).Apply(CurveMath.Create(State.X));
+                double scale = VerticalScale(State);
+                if (vertical.Equals(WeightsOf(State, false)) && scale == CurrentScale) return null;
+                return new ChartMapping(vertical, scale).Apply(CurveMath.Create(State.X));
             }
         }
+
+        /// <summary> Display multiplier for vertical movement with one curve for both axes (Y/X applies after the curve). </summary>
+        private double VerticalScale(ProfileState s) => !includeSensitivity || s == null ? 1 : s.Sensitivity * s.YXRatio;
 
         /// <summary> Applied curve without the display multiplier (what the driver evaluates). </summary>
         private CurveArgs rawGhostArgs;
@@ -1223,12 +1227,11 @@ namespace CurveEditor.ViewModels
         #region Live mouse
 
         /// <summary>
-        /// Places a raw (already accelerated) mouse report on the applied curve: its input speed,
-        /// and the curve the driver applied for its direction (in chart terms, so a diagonal
-        /// movement with different X and Y weights sits between the two directions' curves).
-        /// Returns null if it can't be placed.
+        /// Places a raw (already accelerated) mouse report on the applied curve: its input speed
+        /// and its direction's weights. Returns null if it can't be placed. Draw it with
+        /// <see cref="LiveCurve"/>, which follows display changes made afterwards.
         /// </summary>
-        public (double Speed, ICurve Curve)? PlaceLiveInput(double dx, double dy, double timeMs)
+        public LiveSample? PlaceLiveInput(double dx, double dy, double timeMs)
         {
             var applied = selected?.Applied;
             var ghost = RawGhost;
@@ -1247,9 +1250,22 @@ namespace CurveEditor.ViewModels
                 RangeY = applied.RangeY,
                 LpNorm = applied.LpNorm,
             };
-            var sample = LiveInput.Solve(profile, ghost, editingY, dx, dy, timeMs);
-            if (sample == null) return null;
-            return (sample.Value.Speed, new ChartMapping(sample.Value.Weights, AppliedScale).Apply(ghost));
+            return LiveInput.Solve(profile, ghost, editingY, dx, dy, timeMs);
+        }
+
+        /// <summary>
+        /// The applied curve for a placed movement's direction, in chart terms: a diagonal movement
+        /// with one curve for both axes sits between the horizontal and vertical curves (the Y/X
+        /// ratio is blended by angle, like the range weight).
+        /// </summary>
+        public ICurve LiveCurve(LiveSample sample)
+        {
+            var applied = selected?.Applied;
+            var ghost = RawGhost;
+            if (applied == null || ghost == null) return null;
+            double scale = applied.Separate ? AppliedScale
+                : AppliedScale + sample.Vertical * (VerticalScale(applied) - AppliedScale);
+            return new ChartMapping(sample.Weights, scale).Apply(ghost);
         }
 
         private IList<MultiHandleDevice> systemDevices;
