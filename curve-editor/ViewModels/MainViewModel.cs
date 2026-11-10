@@ -1,0 +1,1525 @@
+using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Globalization;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using System.Windows.Input;
+using CurveEditor.Controls;
+using CurveEditor.Core;
+using CurveEditor.Core.Curves;
+using CurveEditor.Core.Handles;
+using CurveEditor.Core.Interaction;
+using CurveEditor.Models;
+using CurveEditor.Services;
+
+namespace CurveEditor.ViewModels
+{
+    public sealed class ModeOption
+    {
+        public ModeOption(CurveMode mode, string name, string description)
+        {
+            Mode = mode;
+            Name = name;
+            Description = description;
+        }
+
+        public CurveMode Mode { get; }
+
+        public string Name { get; }
+
+        public string Description { get; }
+
+        public override string ToString() => Name;
+    }
+
+    /// <summary> Edit state for one profile of the driver config. </summary>
+    public sealed class ProfileEditor : ObservableObject
+    {
+        private string name;
+
+        public ProfileEditor(Profile profile, ProfileState state)
+        {
+            Profile = profile;
+            name = profile.name;
+            AppliedName = profile.name;
+            Current = state;
+            Applied = state;
+        }
+
+        public Profile Profile { get; }
+
+        public string Name
+        {
+            get => name;
+            set => Set(ref name, value);
+        }
+
+        /// <summary> Name in the last applied settings (used to keep the sidecar tidy). </summary>
+        public string AppliedName { get; set; }
+
+        public ProfileState Current { get; set; }
+
+        /// <summary> Last applied (or loaded) state: drawn as the ghost curve. </summary>
+        public ProfileState Applied { get; set; }
+
+        public UndoStack<ProfileState> History { get; } = new UndoStack<ProfileState>();
+
+        public bool IsDirty => !Current.SameAs(Applied) || Name != AppliedName;
+
+        public override string ToString() => Name;
+    }
+
+    public sealed class MainViewModel : ObservableObject
+    {
+        private readonly SettingsService settings;
+        private readonly ViewState view;
+        private ProfileEditor selected;
+        private bool editingY;
+        private string status = "";
+        private string selection = "";
+        private string selectedHandleId;
+        private HandleContext context;
+        private bool dragging;
+        private bool dragPushed;
+        private string lastNudgeId;
+        private DateTime lastNudgeTime;
+        private ChartKind chartKind = ChartKind.Sensitivity;
+        private bool devicesDirty;
+        private bool applying;
+        private string lutText = "";
+        private readonly List<string> deletedNames = new List<string>();
+        private readonly List<(ProfileEditor Editor, ProfileState State)> loadedStates = new List<(ProfileEditor, ProfileState)>();
+        private readonly Dictionary<(ProfileEditor, bool), double> capStash = new Dictionary<(ProfileEditor, bool), double>();
+
+        public MainViewModel(SettingsService settings, ViewState view)
+        {
+            this.settings = settings;
+            this.view = view;
+
+            Modes = new[]
+            {
+                new ModeOption(CurveMode.Classic, "Classic", "Linear or power-law growth above an offset, optionally capped"),
+                new ModeOption(CurveMode.Natural, "Natural", "Rises quickly then eases into a limit"),
+                new ModeOption(CurveMode.Power, "Power", "Sensitivity grows as a power of speed"),
+                new ModeOption(CurveMode.Synchronous, "Synchronous", "S-curve around a sync speed, between 1/motivity and motivity"),
+                new ModeOption(CurveMode.Jump, "Jump", "Steps up at a given speed, optionally smoothed"),
+                new ModeOption(CurveMode.Lookup, "Custom curve", "Free-form: add, drag and delete points"),
+                new ModeOption(CurveMode.NoAccel, "No acceleration", "Constant sensitivity"),
+            };
+
+            ApplyCommand = new RelayCommand(async () => await ApplyAsync(), () => !applying);
+            MakeDefaultCommand = new RelayCommand(MakeDefault, () => selected != null && Profiles.IndexOf(selected) > 0);
+            RevertCommand = new RelayCommand(Revert, () => selected?.Applied != null && selected.IsDirty);
+            UndoCommand = new RelayCommand(Undo, () => selected?.History.CanUndo == true);
+            RedoCommand = new RelayCommand(Redo, () => selected?.History.CanRedo == true);
+            FitCommand = new RelayCommand(Fit);
+            ResetViewCommand = new RelayCommand(ResetView);
+            ConvertToCustomCommand = new RelayCommand(ConvertToCustom, () => CurrentArgs != null && CurrentArgs.Mode != CurveMode.Lookup);
+            DeleteProfileCommand = new RelayCommand(DeleteProfile, () => Profiles.Count > 1);
+        }
+
+        public event EventHandler CurveChanged;
+
+        /// <summary> Asks the view for a name (title, prompt, initial) and returns null on cancel. </summary>
+        public Func<string, string, string, string> PromptForText { get; set; }
+
+        /// <summary> Supplied by the view: data-space size of one arrow-key nudge at the selected handle. </summary>
+        public Func<Point2?> NudgeStepProvider { get; set; }
+
+        public IReadOnlyList<ModeOption> Modes { get; }
+
+        public ObservableCollection<ProfileEditor> Profiles { get; } = new ObservableCollection<ProfileEditor>();
+
+        public DriverConfig Config => settings.Config;
+
+        public ICommand ApplyCommand { get; }
+        public ICommand RevertCommand { get; }
+        public ICommand UndoCommand { get; }
+        public ICommand RedoCommand { get; }
+        public ICommand FitCommand { get; }
+        public ICommand ResetViewCommand { get; }
+        public ICommand ConvertToCustomCommand { get; }
+        public ICommand DeleteProfileCommand { get; }
+        public ICommand MakeDefaultCommand { get; }
+
+        public ObservableCollection<ParameterField> Parameters { get; } = new ObservableCollection<ParameterField>();
+
+        #region Loading
+
+        public void Load()
+        {
+            settings.Load();
+            LoadProfiles();
+            Status = settings.LoadWarning ?? $"Loaded {settings.SettingsPath}";
+        }
+
+        /// <summary>
+        /// Demo state for screenshots: a capped classic curve whose cap was just raised, so the
+        /// ghost curve, handles and deltas are all visible. Never touches the driver or disk.
+        /// </summary>
+        public void LoadDemo()
+        {
+            settings.LoadDefaults();
+            LoadProfiles();
+
+            var applied = State.Clone();
+            applied.X = new CurveArgs { Mode = CurveMode.Classic, Gain = true, Acceleration = 0.03, ExponentClassic = 2, InputOffset = 2, CapY = 1.6, CapMode = CapType.Output };
+            selected.Applied = applied;
+
+            var current = applied.Clone();
+            current.X = HandleSets.For(CurveMode.Classic).Drag(applied.X, HandleIds.Cap, new Point2(26, 1.75), HandleContext.Default);
+            selected.Current = current;
+
+            RebuildParameters();
+            ResetView();
+            SelectedHandleId = HandleIds.Cap;
+            RefreshAll();
+            Status = "Demo curve (screenshot mode)";
+        }
+
+        private void LoadProfiles()
+        {
+            Profiles.Clear();
+            loadedStates.Clear();
+
+            // settings.json may not be what the driver runs (apply-on-open off, or the driver rejected it):
+            // until it is activated, the ghost curve shows the driver's profile of the same name
+            var active = settings.LoadedFromFile ? SettingsService.TryGetActive() : null;
+
+            foreach (var p in settings.Config.profiles)
+            {
+                settings.Sidecar.Profiles.TryGetValue(p.name, out var saved);
+                var state = ProfileState.FromProfile(p, saved);
+                var editor = new ProfileEditor(p, state);
+                if (settings.LoadedFromFile)
+                {
+                    // unknown (null) if the driver can't be read: don't claim the file is applied
+                    var running = active?.profiles.FirstOrDefault(a => a.name == p.name);
+                    settings.Sidecar.Profiles.TryGetValue(p.name, out var savedRunning);
+                    editor.Applied = running == null ? null : ProfileState.FromProfile(running, savedRunning);
+                }
+                loadedStates.Add((editor, state));
+                Profiles.Add(editor);
+            }
+
+            devicesDirty = false;
+            deletedNames.Clear();
+            capStash.Clear();
+            selected = null;
+            SelectedProfile = Profiles.FirstOrDefault();
+        }
+
+        #endregion
+
+        #region Selection and derived state
+
+        public ProfileEditor SelectedProfile
+        {
+            get => selected;
+            set
+            {
+                if (value == null || !Set(ref selected, value)) return;
+                editingY = false;
+                selectedHandleId = null;
+                handleX.Clear();
+                lastNudgeId = null;
+                OnPropertyChanged(nameof(EditingY));
+                RebuildParameters();
+                RefreshAll();
+                ResetView();
+            }
+        }
+
+        private ProfileState State => selected?.Current;
+
+        public CurveArgs CurrentArgs => State == null ? null : (editingY && State.Separate ? State.Y : State.X);
+
+        /// <summary> The applied curve the driver uses for the axis being edited (Y only if the applied profile was by-component). </summary>
+        public CurveArgs AppliedArgs => selected?.Applied == null ? null : (editingY && selected.Applied.Separate ? selected.Applied.Y : selected.Applied.X);
+
+        /// <summary> Display multiplier: base sensitivity (and Y/X ratio for the vertical curve), or 1 for the bare curve. </summary>
+        private double ScaleOf(ProfileState s) =>
+            !includeSensitivity || s == null ? 1 : s.Sensitivity * (editingY && s.Separate ? s.YXRatio : 1);
+
+        public double CurrentScale => ScaleOf(State);
+
+        private double AppliedScale => ScaleOf(selected?.Applied);
+
+        /// <summary> Where the curve starts on the chart (the base sensitivity). </summary>
+        public double BaselineY => CurrentScale;
+
+        public ICurve Curve => CurrentArgs == null ? null : new ScaledCurve(CurveMath.Create(CurrentArgs), CurrentScale);
+
+        public ICurve Ghost => AppliedArgs == null ? null : new ScaledCurve(CurveMath.Create(AppliedArgs), AppliedScale);
+
+        /// <summary> Applied curve without the display multiplier (what the driver evaluates). </summary>
+        private CurveArgs rawGhostArgs;
+        private ICurve rawGhost;
+
+        private ICurve RawGhost
+        {
+            get
+            {
+                var a = AppliedArgs;
+                if (!ReferenceEquals(a, rawGhostArgs))
+                {
+                    rawGhostArgs = a;
+                    rawGhost = a == null ? null : CurveMath.Create(a);
+                }
+                return rawGhost;
+            }
+        }
+
+        /// <summary> Handles in chart coordinates (y scaled like the curve). </summary>
+        public IReadOnlyList<Handle> Handles
+        {
+            get
+            {
+                if (CurrentArgs == null) return Array.Empty<Handle>();
+                var raw = HandleSets.For(CurrentArgs.Mode).GetHandles(CurrentArgs, Context);
+                double k = CurrentScale;
+                if (k == 1) return raw;
+                return raw.Select(h => new Handle(h.Id, h.Label, new Point2(h.Position.X, h.Position.Y * k), h.Constraint, h.Description, h.Affects.ToArray()) { Kind = h.Kind, SlidesAlongCurve = h.SlidesAlongCurve }).ToList();
+            }
+        }
+
+        private bool includeSensitivity = true;
+
+        /// <summary> Show sensitivity × curve (what you feel) instead of the bare curve multiplier. </summary>
+        public bool IncludeSensitivity
+        {
+            get => includeSensitivity;
+            set
+            {
+                if (!Set(ref includeSensitivity, value)) return;
+                FitY();
+                RefreshAll();
+            }
+        }
+
+        private Point2 ToCurveSpace(Point2 chart)
+        {
+            double k = CurrentScale;
+            return k == 1 || k == 0 ? chart : new Point2(chart.X, chart.Y / k);
+        }
+
+        public string SelectedHandleId
+        {
+            get => selectedHandleId;
+            set
+            {
+                if (Set(ref selectedHandleId, value)) UpdateSelectionText();
+            }
+        }
+
+        private HandleContext Context
+        {
+            get
+            {
+                if (context == null || (!dragging && (context.AnchorX < view.MinX || context.AnchorX > view.MaxX)))
+                {
+                    RecomputeContext();
+                }
+                return handleX.Count == 0 ? context : new HandleContext(context.AnchorX, context.EdgeX, handleX);
+            }
+        }
+
+        /// <summary> Speeds the user slid handles to (bend point, accel point, …), by handle id. </summary>
+        private readonly Dictionary<string, double> handleX = new Dictionary<string, double>();
+
+        private void RecomputeContext()
+        {
+            context = new HandleContext(
+                view.ScreenToX(view.Left + view.Width * 0.6),
+                view.ScreenToX(view.Left + view.Width * 0.9));
+        }
+
+        public bool IsDirty => devicesDirty || Profiles.Any(p => p.IsDirty);
+
+        public string DirtyText => IsDirty ? "● Unsaved changes — press Apply to write them to the driver" : "All changes applied";
+
+        public string Status
+        {
+            get => status;
+            set => Set(ref status, value);
+        }
+
+        public string SelectionText
+        {
+            get => selection;
+            private set => Set(ref selection, value);
+        }
+
+        public ChartKind ChartKind
+        {
+            get => chartKind;
+            set
+            {
+                if (!Set(ref chartKind, value)) return;
+                Raise();
+                FitY();
+            }
+        }
+
+        public bool LogX
+        {
+            get => view.LogX;
+            set
+            {
+                if (view.LogX == value) return;
+                view.SetLogX(value);
+                OnPropertyChanged();
+                RecomputeContext();
+                Raise();
+            }
+        }
+
+        #endregion
+
+        #region Curve options
+
+        public bool EditingY
+        {
+            get => editingY;
+            set
+            {
+                if (!Set(ref editingY, value)) return;
+                selectedHandleId = null;
+                handleX.Clear();
+                lastNudgeId = null;
+                RebuildParameters();
+                RefreshAll();
+                ResetView();
+            }
+        }
+
+        public ModeOption SelectedMode
+        {
+            get => CurrentArgs == null ? null : Modes.First(m => m.Mode == CurrentArgs.Mode);
+            set
+            {
+                if (value == null || CurrentArgs == null || value.Mode == CurrentArgs.Mode) return;
+                ChangeMode(value.Mode);
+            }
+        }
+
+        public bool Gain
+        {
+            get => CurrentArgs?.Gain ?? true;
+            set
+            {
+                if (CurrentArgs == null || value == CurrentArgs.Gain) return;
+                EditCurve(a => a.Gain = value, "gain");
+            }
+        }
+
+        public bool Legacy
+        {
+            get => !Gain;
+            set => Gain = !value;
+        }
+
+        public bool IsLookup => CurrentArgs?.Mode == CurveMode.Lookup;
+
+        public bool IsParametric => CurrentArgs != null && CurrentArgs.Mode != CurveMode.Lookup && CurrentArgs.Mode != CurveMode.NoAccel;
+
+        public bool HasGainOption => CurrentArgs != null && CurrentArgs.Mode != CurveMode.NoAccel;
+
+        public string GainLabel => IsLookup ? "Points are output speed (gain)" : "Gain";
+
+        public string LegacyLabel => IsLookup ? "Points are sensitivity (legacy)" : "Legacy";
+
+        public bool CapVisible => CurrentArgs != null && (CurrentArgs.Mode == CurveMode.Classic || CurrentArgs.Mode == CurveMode.Power);
+
+        public bool Capped
+        {
+            get => CurrentArgs != null && CapVisible && CurrentArgs.CapY > 0;
+            set
+            {
+                if (!CapVisible || value == Capped) return;
+                var key = (selected, editingY && State.Separate);
+                CurveArgs next;
+                if (!value)
+                {
+                    // remember the cap so ticking the box again restores exactly this curve
+                    capStash[key] = HandleSets.For(CurrentArgs.Mode).Normalize(CurrentArgs).CapY;
+                    next = HandleSets.SetCapped(CurrentArgs, false, Context);
+                }
+                else
+                {
+                    next = null;
+                    if (capStash.TryGetValue(key, out double capY))
+                    {
+                        next = HandleSets.For(CurrentArgs.Mode).Normalize(CurrentArgs);
+                        next.CapY = capY;
+                        if (!HandleSets.IsUsable(next)) next = null;
+                    }
+                    next = next ?? HandleSets.SetCapped(CurrentArgs, true, Context);
+                }
+                ReplaceCurve(next, pushUndo: true);
+                RebuildParameters();
+                RefreshAll();
+            }
+        }
+
+        public bool SmoothLut
+        {
+            get => CurrentArgs?.SmoothLut ?? false;
+            set
+            {
+                if (value == SmoothLut) return;
+                if (value && CurrentArgs.ControlPoints.Count > LutBuilder.MaxSmoothControlPoints)
+                {
+                    Status = $"Smoothing supports up to {LutBuilder.MaxSmoothControlPoints} points; remove some points first.";
+                    OnPropertyChanged();
+                    return;
+                }
+                EditCurve(a => a.SmoothLut = value, "smoothing");
+            }
+        }
+
+        public string PointCountText => IsLookup
+            ? $"{CurrentArgs.ControlPoints.Count} points → {CurrentArgs.BuildLut().Length} table entries (max {CurveArgs.MaxLutPoints})"
+            : "";
+
+        /// <summary> Custom curve points as "x,y;x,y;…" (same format as the grapher's LUT box). </summary>
+        public string LutText
+        {
+            get => lutText;
+            set
+            {
+                if (!IsLookup) return;
+                if (!TryParseLut(value, out var points, out string error))
+                {
+                    // keep what was typed so it can be corrected instead of retyped
+                    lutText = value;
+                    Status = error;
+                    OnPropertyChanged();
+                    return;
+                }
+                EditCurve(a =>
+                {
+                    a.ControlPoints = points;
+                    if (points.Count > LutBuilder.MaxSmoothControlPoints) a.SmoothLut = false;
+                }, "points");
+            }
+        }
+
+        private static bool TryParseLut(string text, out List<Point2> points, out string error)
+        {
+            points = new List<Point2>();
+            error = null;
+            var entries = (text ?? "").Split(new[] { ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+            foreach (var entry in entries)
+            {
+                var parts = entry.Split(',');
+                if (parts.Length != 2 ||
+                    !double.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out double x) ||
+                    !double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out double y))
+                {
+                    error = $"Could not read point \"{entry.Trim()}\"; use x,y;x,y;…";
+                    return false;
+                }
+                if (!HandleSets.Finite(x) || !HandleSets.Finite(y) || x <= 0 || y <= 0 || (points.Count > 0 && x <= points[points.Count - 1].X))
+                {
+                    error = "Points need positive values and strictly increasing speeds.";
+                    return false;
+                }
+                points.Add(new Point2(x, y));
+            }
+            if (points.Count < 2 || points.Count > CurveArgs.MaxLutPoints)
+            {
+                error = $"A custom curve needs between 2 and {CurveArgs.MaxLutPoints} points.";
+                return false;
+            }
+            return true;
+        }
+
+        private static string FormatLut(IEnumerable<Point2> points) =>
+            string.Join(";", points.Select(p => string.Format(CultureInfo.InvariantCulture, "{0:G7},{1:G7}", p.X, p.Y)));
+
+        #endregion
+
+        #region Profile-level settings
+
+        private double ProfileValue(Func<ProfileState, double> get) => State == null ? 0 : get(State);
+
+        public double Sensitivity { get => ProfileValue(s => s.Sensitivity); set => EditProfile(s => s.Sensitivity = value, value != 0); }
+        public double YXRatio { get => ProfileValue(s => s.YXRatio); set => EditProfile(s => s.YXRatio = value, value != 0); }
+        public double Rotation { get => ProfileValue(s => s.Rotation); set => EditProfile(s => s.Rotation = value); }
+        public double Snap { get => ProfileValue(s => s.Snap); set => EditProfile(s => s.Snap = value, value >= 0 && value <= 45); }
+        public double SpeedCap { get => ProfileValue(s => s.SpeedCap); set => EditProfile(s => s.SpeedCap = value, value >= 0); }
+        public double LRRatio { get => ProfileValue(s => s.LRRatio); set => EditProfile(s => s.LRRatio = value, value > 0); }
+        public double UDRatio { get => ProfileValue(s => s.UDRatio); set => EditProfile(s => s.UDRatio = value, value > 0); }
+        public double DomainX { get => ProfileValue(s => s.DomainX); set => EditProfile(s => s.DomainX = value, value > 0); }
+        public double DomainY { get => ProfileValue(s => s.DomainY); set => EditProfile(s => s.DomainY = value, value > 0); }
+        public double RangeX { get => ProfileValue(s => s.RangeX); set => EditProfile(s => s.RangeX = value, value >= 0); }
+        public double RangeY { get => ProfileValue(s => s.RangeY); set => EditProfile(s => s.RangeY = value, value >= 0); }
+        public double LpNorm { get => ProfileValue(s => s.LpNorm); set => EditProfile(s => s.LpNorm = value, value > 0); }
+        public double InputSmoothHalflife { get => ProfileValue(s => s.InputSmoothHalflife); set => EditProfile(s => s.InputSmoothHalflife = value, value >= 0); }
+        public double ScaleSmoothHalflife { get => ProfileValue(s => s.ScaleSmoothHalflife); set => EditProfile(s => s.ScaleSmoothHalflife = value, value >= 0); }
+        public double OutputSmoothHalflife { get => ProfileValue(s => s.OutputSmoothHalflife); set => EditProfile(s => s.OutputSmoothHalflife = value, value >= 0); }
+
+        public bool Separate
+        {
+            get => State?.Separate ?? false;
+            set
+            {
+                if (State == null || value == State.Separate) return;
+                Push();
+                var next = State.Clone();
+                next.Separate = value;
+                if (value && next.Y.Mode == CurveMode.NoAccel && next.X.Mode != CurveMode.NoAccel)
+                {
+                    // start the vertical curve as a copy of the horizontal one
+                    next.Y = next.X.Clone();
+                }
+                else if (!value && selected.Applied != null && !selected.Applied.Separate)
+                {
+                    // the driver ignores Y in combined mode; drop the copy so the profile isn't left "changed"
+                    next.Y = selected.Applied.Y;
+                }
+                selected.Current = next;
+                editingY = false;
+                OnPropertyChanged(nameof(EditingY));
+                RebuildParameters();
+                RefreshAll();
+            }
+        }
+
+        private static readonly string[] ProfileProperties =
+        {
+            nameof(Sensitivity), nameof(YXRatio), nameof(Rotation), nameof(Snap), nameof(SpeedCap),
+            nameof(LRRatio), nameof(UDRatio), nameof(DomainX), nameof(DomainY), nameof(RangeX), nameof(RangeY),
+            nameof(LpNorm), nameof(InputSmoothHalflife), nameof(ScaleSmoothHalflife), nameof(OutputSmoothHalflife),
+            nameof(Separate),
+        };
+
+        private void EditProfile(Action<ProfileState> edit, bool valid = true)
+        {
+            if (State == null) return;
+            if (!valid)
+            {
+                Status = "That value isn't allowed by the driver.";
+                RefreshAll();
+                return;
+            }
+
+            var next = State.Clone();
+            edit(next);
+            if (next.SameAs(State)) return;
+
+            Push();
+            selected.Current = next;
+            RefreshAll();
+        }
+
+        #endregion
+
+        #region Editing
+
+        private void Push()
+        {
+            selected.History.Push(State);
+            lastNudgeId = null;
+        }
+
+        private void SetCurrentArgs(ProfileState state, CurveArgs args)
+        {
+            if (editingY && state.Separate) state.Y = args;
+            else state.X = args;
+        }
+
+        /// <summary> Replaces the curve being edited. Returns false if the driver would reject it. </summary>
+        private bool ReplaceCurve(CurveArgs args, bool pushUndo, string what = null)
+        {
+            if (!HandleSets.IsUsable(args))
+            {
+                var errors = Validation.Validate(args);
+                Status = $"Can't set {what ?? "that value"}: " + (errors.Count > 0 ? string.Join("; ", errors) : "the curve would be undefined");
+                return false;
+            }
+
+            if (args.Equals(CurrentArgs)) return true;
+
+            if (pushUndo) Push();
+            var next = State.Clone();
+            SetCurrentArgs(next, args);
+            selected.Current = next;
+            return true;
+        }
+
+        private void EditCurve(Action<CurveArgs> edit, string what)
+        {
+            if (CurrentArgs == null) return;
+            var next = CurrentArgs.Clone();
+            edit(next);
+            ReplaceCurve(next, pushUndo: true, what: what);
+            RebuildParameters();
+            RefreshAll();
+        }
+
+        private void ChangeMode(CurveMode mode)
+        {
+            var prev = CurrentArgs;
+            var next = prev.Clone();
+            next.Mode = mode;
+
+            if (mode == CurveMode.Lookup && next.ControlPoints.Count < 2)
+            {
+                next.ControlPoints = LookupHandles.SampleCurve(prev, Math.Max(view.MaxX, 10));
+                next.SmoothLut = true;
+            }
+
+            next = HandleSets.For(mode).Normalize(next);
+
+            if (!HandleSets.IsUsable(next))
+            {
+                // stored parameters for this mode are unusable: start from the driver defaults
+                next = HandleSets.For(mode).Normalize(new CurveArgs { Mode = mode, Gain = prev.Gain, ControlPoints = next.ControlPoints, SmoothLut = next.SmoothLut });
+            }
+
+            if (!ReplaceCurve(next, pushUndo: true, what: "mode"))
+            {
+                RefreshAll();
+                return;
+            }
+            selectedHandleId = null;
+            handleX.Clear();
+            if (mode == CurveMode.Synchronous && !view.LogX) LogX = true;
+            RebuildParameters();
+            RefreshAll();
+            // keep the speed range so the axis doesn't jump; only refit it if no handle would be visible
+            RecomputeContext();
+            if (!AnyFixedHandleInView()) FitX();
+            FitY();
+        }
+
+        private void ConvertToCustom()
+        {
+            var prev = CurrentArgs;
+            var next = prev.Clone();
+            next.Mode = CurveMode.Lookup;
+            next.ControlPoints = LookupHandles.SampleCurve(prev, Math.Max(view.MaxX, 10), 14);
+            next.SmoothLut = true;
+            if (!ReplaceCurve(next, pushUndo: true, what: "custom curve")) return;
+            selectedHandleId = null;
+            handleX.Clear();
+            RebuildParameters();
+            RefreshAll();
+            Status = "Converted to a custom curve. Drag points, double-click to add, right-click to delete.";
+        }
+
+        public void BeginDrag(string id)
+        {
+            dragging = true;
+            dragPushed = false;
+            dragStartArgs = CurrentArgs;
+            dragStartPosition = Handles.FirstOrDefault(h => h.Id == id)?.Position;
+            SelectedHandleId = id;
+        }
+
+        /// <summary>
+        /// The view restarted the drag from where the handle is now (precision changed mid-drag):
+        /// move the baseline with it, but keep the drag a single undo step.
+        /// </summary>
+        public void RebaseDrag(string id)
+        {
+            if (!dragging) return;
+            dragStartArgs = CurrentArgs;
+            dragStartPosition = Handles.FirstOrDefault(h => h.Id == id)?.Position;
+        }
+
+        private CurveArgs dragStartArgs;
+        private Point2? dragStartPosition;
+
+        public void MoveHandle(string id, Point2 target, bool isNudge)
+        {
+            if (CurrentArgs == null) return;
+
+            var handle = Handles.FirstOrDefault(h => h.Id == id);
+            if (handle == null) return;
+
+            var ctx = Context;
+            bool slides = handle.SlidesAlongCurve;
+
+            // where the move started: the drag's start (drags are relative), or the handle now (nudges)
+            var baseArgs = dragging && dragStartArgs != null ? dragStartArgs : CurrentArgs;
+            var start = dragging && dragStartPosition.HasValue ? dragStartPosition.Value : handle.Position;
+            bool sideways = slides && target.X != start.X;
+
+            if (sideways)
+            {
+                // slide along the curve: horizontal movement keeps the curve, only the vertical part changes the value
+                ctx = WithChosenX(ctx, id, target.X);
+                if (handle.Kind != HandleKind.Level)
+                {
+                    double onCurve = CurveMath.Sensitivity(baseArgs, target.X) * CurrentScale;
+                    target = new Point2(target.X, onCurve + (target.Y - start.Y));
+                }
+            }
+
+            var next = HandleSets.For(CurrentArgs.Mode).Drag(CurrentArgs, id, ToCurveSpace(target), ctx);
+
+            if (sideways)
+            {
+                // remember the speed the handle is actually drawn at (the handle set clamps it)
+                var placed = HandleSets.For(next.Mode).GetHandles(next, ctx).FirstOrDefault(h => h.Id == id);
+                if (placed != null) handleX[id] = placed.Position.X;
+            }
+
+            if (next.Equals(CurrentArgs))
+            {
+                if (sideways) RefreshAll(parametersOnly: true);
+                return;
+            }
+
+            if (isNudge)
+            {
+                // a burst of arrow presses on one handle is a single undo step
+                bool coalesce = lastNudgeId == id && (DateTime.UtcNow - lastNudgeTime).TotalMilliseconds < 1000;
+                if (!coalesce) Push();
+                lastNudgeId = id;
+                lastNudgeTime = DateTime.UtcNow;
+            }
+            else if (!dragPushed)
+            {
+                Push();
+                dragPushed = true;
+            }
+
+            var state = State.Clone();
+            SetCurrentArgs(state, next);
+            selected.Current = state;
+            SelectedHandleId = id;
+            RefreshAll(parametersOnly: true);
+        }
+
+        private static HandleContext WithChosenX(HandleContext ctx, string id, double x)
+        {
+            var chosen = new Dictionary<string, double>();
+            foreach (var hid in new[] { HandleIds.Point, HandleIds.Bend, HandleIds.Smooth, HandleIds.Limit, HandleIds.Motivity })
+            {
+                double v = ctx.X(hid, double.NaN);
+                if (!double.IsNaN(v)) chosen[hid] = v;
+            }
+            chosen[id] = x;
+            return new HandleContext(ctx.AnchorX, ctx.EdgeX, chosen);
+        }
+
+        public void EndDrag(string id)
+        {
+            dragging = false;
+            dragStartArgs = null;
+            dragStartPosition = null;
+            RefreshAll();
+        }
+
+        public void AddPoint(Point2 p)
+        {
+            if (!IsLookup) return;
+            if (p.X <= 0)
+            {
+                Status = "Points need a speed above zero.";
+                return;
+            }
+            var next = CurrentArgs.Clone();
+            int index = LookupHandles.AddPoint(next, ToCurveSpace(p));
+            if (index < 0)
+            {
+                Status = next.ControlPoints.Count >= LookupHandles.MaxControlPoints(next)
+                    ? $"This curve already has the maximum number of points ({LookupHandles.MaxControlPoints(next)})."
+                    : "A point already exists at that speed.";
+                return;
+            }
+            if (ReplaceCurve(next, pushUndo: true, what: "point"))
+            {
+                SelectedHandleId = HandleIds.LutPoint(index);
+                RefreshAll();
+            }
+        }
+
+        public void RemoveHandle(string id)
+        {
+            if (!IsLookup || !HandleIds.TryParseLutPoint(id, out int index)) return;
+            var next = CurrentArgs.Clone();
+            if (!LookupHandles.RemovePoint(next, index))
+            {
+                Status = "A custom curve needs at least two points.";
+                return;
+            }
+            if (ReplaceCurve(next, pushUndo: true, what: "point"))
+            {
+                SelectedHandleId = null;
+                RefreshAll();
+            }
+        }
+
+        private void Undo()
+        {
+            if (selected.History.TryUndo(State, out var prev))
+            {
+                selected.Current = prev;
+                lastNudgeId = null;
+                AfterHistoryChange();
+            }
+        }
+
+        private void Redo()
+        {
+            if (selected.History.TryRedo(State, out var next))
+            {
+                selected.Current = next;
+                lastNudgeId = null;
+                AfterHistoryChange();
+            }
+        }
+
+        private void Revert()
+        {
+            // null when the driver isn't running this profile (settings.json not applied yet)
+            if (selected?.Applied == null) return;
+            Push();
+            selected.Current = selected.Applied;
+            string status = "Reverted to the last applied settings.";
+
+            string oldName = selected.AppliedName;
+            if (oldName != null && oldName != selected.Name)
+            {
+                if (Profiles.Any(p => p != selected && p.Name == oldName))
+                {
+                    status += $" The name stays \"{selected.Name}\" because another profile is now called \"{oldName}\".";
+                }
+                else
+                {
+                    foreach (var d in Config.devices.Where(d => d.profile == selected.Name))
+                    {
+                        d.profile = oldName;
+                        devicesDirty = true;
+                    }
+                    selected.Name = oldName;
+                }
+            }
+
+            AfterHistoryChange();
+            Status = status;
+        }
+
+        private void AfterHistoryChange()
+        {
+            if (!State.Separate) editingY = false;
+            if (HandleIds.TryParseLutPoint(selectedHandleId, out _)) selectedHandleId = null;
+            lastNudgeId = null;
+            OnPropertyChanged(nameof(EditingY));
+            RebuildParameters();
+            RefreshAll();
+        }
+
+        #endregion
+
+        #region Parameters panel
+
+        private void RebuildParameters()
+        {
+            Parameters.Clear();
+            var a = CurrentArgs;
+            if (a == null) return;
+
+            ParameterField F(string label, string tip, Func<CurveArgs, double> get, Action<CurveArgs, double> set, double min = double.MinValue, double max = double.MaxValue) =>
+                new ParameterField(label, tip, get, set, min, max, CommitParameter);
+
+            switch (a.Mode)
+            {
+                case CurveMode.Classic:
+                    Parameters.Add(F("Acceleration", "How quickly sensitivity grows", c => c.Acceleration, (c, v) => c.Acceleration = v, 1e-300));
+                    Parameters.Add(F("Exponent", "Curvature (2 = linear sensitivity growth)", c => c.ExponentClassic, (c, v) => c.ExponentClassic = v, 1.0001, 100));
+                    Parameters.Add(F("Input offset", "Speed where acceleration starts", c => c.InputOffset, (c, v) => c.InputOffset = v, 0));
+                    if (a.CapY > 0) Parameters.Add(F("Cap", a.Gain ? "Gain cap (sensitivity levels off toward this)" : "Maximum sensitivity", c => c.CapY, (c, v) => c.CapY = v, 1e-6));
+                    break;
+                case CurveMode.Power:
+                    Parameters.Add(F("Scale", "Speed scale", c => c.Scale, (c, v) => c.Scale = v, 1e-300));
+                    Parameters.Add(F("Exponent", "Power the speed is raised to", c => c.ExponentPower, (c, v) => c.ExponentPower = v, 1e-6, 100));
+                    Parameters.Add(F("Output offset", "Sensitivity at low speed", c => c.OutputOffset, (c, v) => c.OutputOffset = v, 0));
+                    if (a.CapY > 0) Parameters.Add(F("Cap", a.Gain ? "Gain cap (sensitivity levels off toward this)" : "Maximum sensitivity", c => c.CapY, (c, v) => c.CapY = v, 1e-6));
+                    break;
+                case CurveMode.Natural:
+                    Parameters.Add(F("Decay rate", "How quickly the limit is approached", c => c.DecayRate, (c, v) => c.DecayRate = v, 1e-9));
+                    Parameters.Add(F("Limit", "Sensitivity approached at high speed", c => c.Limit, (c, v) => c.Limit = v, 1e-9));
+                    Parameters.Add(F("Input offset", "Speed where acceleration starts", c => c.InputOffset, (c, v) => c.InputOffset = v, 0));
+                    break;
+                case CurveMode.Jump:
+                    Parameters.Add(F("Jump speed", "Speed of the step", c => c.CapX, (c, v) => c.CapX = v, 1e-9));
+                    Parameters.Add(F("Jump sensitivity", "Sensitivity after the step", c => c.CapY, (c, v) => c.CapY = v, 1e-9));
+                    Parameters.Add(F("Smoothness", "0 = hard step, 1 = smoothest", c => c.Smooth, (c, v) => c.Smooth = v, 0, 1));
+                    break;
+                case CurveMode.Synchronous:
+                    Parameters.Add(F("Sync speed", "Speed where sensitivity is 1", c => c.SyncSpeed, (c, v) => c.SyncSpeed = v, 1e-9));
+                    Parameters.Add(F("Motivity", "Maximum sensitivity (minimum is 1/motivity)", c => c.Motivity, (c, v) => c.Motivity = v, 1.000001));
+                    Parameters.Add(F("Gamma", "Transition speed (higher = faster)", c => c.Gamma, (c, v) => c.Gamma = v, 1e-9));
+                    Parameters.Add(F("Smoothness", "Softness of the approach to motivity", c => c.Smooth, (c, v) => c.Smooth = v, 0, 1));
+                    break;
+            }
+
+            var applied = AppliedArgs;
+            foreach (var p in Parameters) p.Refresh(a, applied);
+        }
+
+        private bool CommitParameter(ParameterField field, double value)
+        {
+            var next = CurrentArgs.Clone();
+            field.Apply(next, value);
+            if (!ReplaceCurve(next, pushUndo: true, what: field.Label.ToLowerInvariant())) return false;
+            RefreshAll();
+            return true;
+        }
+
+        #endregion
+
+        #region Refresh
+
+        private void Raise() => CurveChanged?.Invoke(this, EventArgs.Empty);
+
+        private void RefreshAll(bool parametersOnly = false)
+        {
+            var a = CurrentArgs;
+            var applied = AppliedArgs;
+            if (a != null)
+            {
+                foreach (var p in Parameters) p.Refresh(a, applied);
+            }
+
+            if (!parametersOnly)
+            {
+                OnPropertyChanged(nameof(SelectedMode));
+                OnPropertyChanged(nameof(Gain));
+                OnPropertyChanged(nameof(Legacy));
+                OnPropertyChanged(nameof(GainLabel));
+                OnPropertyChanged(nameof(LegacyLabel));
+                OnPropertyChanged(nameof(HasGainOption));
+                OnPropertyChanged(nameof(IsLookup));
+                OnPropertyChanged(nameof(IsParametric));
+                OnPropertyChanged(nameof(CapVisible));
+                OnPropertyChanged(nameof(Capped));
+                OnPropertyChanged(nameof(SmoothLut));
+                foreach (var name in ProfileProperties) OnPropertyChanged(name);
+            }
+
+            if (IsLookup)
+            {
+                lutText = FormatLut(a.ControlPoints);
+                OnPropertyChanged(nameof(LutText));
+            }
+            OnPropertyChanged(nameof(PointCountText));
+            OnPropertyChanged(nameof(IsDirty));
+            OnPropertyChanged(nameof(DirtyText));
+            OnPropertyChanged(nameof(ProfileUsageText));
+            OnPropertyChanged(nameof(BaselineY));
+            UpdateSelectionText();
+            CommandManager.InvalidateRequerySuggested();
+            Raise();
+        }
+
+        public void UpdateSelectionText()
+        {
+            var a = CurrentArgs;
+            var h = a == null || selectedHandleId == null ? null : Handles.FirstOrDefault(x => x.Id == selectedHandleId);
+            if (h == null)
+            {
+                SelectionText = "Click a handle to select it · Shift = fine drag, Shift+Ctrl = finer, Alt = lock axis · wheel = zoom";
+                return;
+            }
+
+            var sb = new StringBuilder();
+            sb.AppendFormat(CultureInfo.InvariantCulture, "{0}: speed {1:G6}, sensitivity {2:G6}", h.Label, h.Position.X, h.Position.Y);
+
+            var applied = AppliedArgs;
+            foreach (var name in h.Affects)
+            {
+                var prop = typeof(CurveArgs).GetProperty(name);
+                if (prop?.PropertyType != typeof(double)) continue;
+                double v = (double)prop.GetValue(a);
+                sb.AppendFormat(CultureInfo.InvariantCulture, " · {0} {1:G6}", name, v);
+                if (applied != null && applied.Mode == a.Mode)
+                {
+                    double d = v - (double)prop.GetValue(applied);
+                    if (Math.Abs(d) > 1e-12 * Math.Max(1, Math.Abs(v)))
+                        sb.AppendFormat(CultureInfo.InvariantCulture, " (Δ {0}{1:G4})", d > 0 ? "+" : "", d);
+                }
+            }
+
+            var step = NudgeStepProvider?.Invoke();
+            if (step is Point2 s)
+            {
+                string sx = h.Constraint == HandleConstraint.YOnly ? "" : string.Format(CultureInfo.InvariantCulture, " ←→ {0:G3}", s.X);
+                string sy = h.Constraint == HandleConstraint.XOnly ? "" : string.Format(CultureInfo.InvariantCulture, " ↑↓ {0:G3}", s.Y);
+                sb.Append(" · arrow step").Append(sx).Append(sy);
+            }
+
+            SelectionText = sb.ToString();
+        }
+
+        #endregion
+
+        #region View
+
+        /// <summary> Default speed range: enough to show every handle and where the curve settles. </summary>
+        private IEnumerable<double> FixedHandleXs()
+        {
+            var a = CurrentArgs;
+            if (a == null) return Enumerable.Empty<double>();
+            return HandleSets.For(a.Mode).GetHandles(a, Context)
+                .Where(h => h.Id != HandleIds.Point && h.Kind != HandleKind.Level)
+                .Select(h => h.Position.X)
+                .Where(x => HandleSets.Finite(x) && x >= 0)
+                .ToList();
+        }
+
+        private bool AnyFixedHandleInView()
+        {
+            var xs = FixedHandleXs().ToList();
+            return xs.Count == 0 || xs.Any(x => x >= view.MinX && x <= view.MaxX);
+        }
+
+        private void FitX()
+        {
+            var a = CurrentArgs;
+            if (a == null) return;
+
+            var xs = FixedHandleXs().ToList();
+            if (xs.Count == 0) return;
+
+            double max = Math.Max(xs.Max() * 1.15, 1);
+            double min;
+            if (view.LogX)
+            {
+                double smallest = xs.Where(x => x > 0).DefaultIfEmpty(max / 1000).Min();
+                min = Math.Max(smallest / 1.5, ViewState.MinLogX);
+            }
+            else
+            {
+                min = -0.04 * max;
+            }
+
+            view.SetWindow(min, max, view.MinY, view.MaxY);
+            RecomputeContext();
+        }
+
+                public const double DefaultMaxSpeed = 100;
+        public const double DefaultMaxSensitivity = 6;
+
+        /// <summary>
+        /// Home: speed 0–100 and sensitivity 0–6 (or up to the curve's highest value if that's more),
+        /// a fixed frame so the view looks the same every time. Other chart kinds fit their values.
+        /// </summary>
+        public void ResetView()
+        {
+            handleX.Clear();
+            double maxX = DefaultMaxSpeed;
+            view.SetWindow(view.LogX ? 0.1 : -0.04 * maxX, maxX, view.MinY, view.MaxY);
+            RecomputeContext();
+
+            if (chartKind != ChartKind.Sensitivity || Curve == null)
+            {
+                FitY();
+                return;
+            }
+
+            double top = DefaultMaxSensitivity;
+            var curve = Curve;
+            for (int i = 0; i <= 200; i++)
+            {
+                double x = view.ScreenToX(view.Left + view.Width * i / 200);
+                if (x <= 0) continue;
+                double y = curve.Sensitivity(x);
+                if (HandleSets.Finite(y)) top = Math.Max(top, y * 1.1);
+            }
+            view.SetWindow(view.MinX, view.MaxX, 0, top);
+            Raise();
+        }
+
+        /// <summary> F / Fit: frame every handle horizontally, then fit the values vertically. </summary>
+        public void Fit()
+        {
+            FitX();
+            FitY();
+        }
+
+        private void FitY()
+        {
+            var curve = Curve;
+            var ghost = Ghost;
+            if (curve == null) return;
+
+            Func<ICurve, double, double> value = (c, x) =>
+                chartKind == ChartKind.Velocity ? c.Velocity(x) :
+                chartKind == ChartKind.Gain ? c.Gain(x) : c.Sensitivity(x);
+
+            var extra = chartKind == ChartKind.Sensitivity ? Handles.Select(h => h.Position).ToList() : new List<Point2>();
+            if (ghost != null)
+            {
+                for (int i = 0; i <= 50; i++)
+                {
+                    double x = view.ScreenToX(view.Left + view.Width * i / 50);
+                    if (x <= 0) continue;
+                    extra.Add(new Point2(x, value(ghost, x)));
+                }
+            }
+
+            view.FitY(x => value(curve, x), extra);
+            if (chartKind == ChartKind.Velocity && view.MinY < 0)
+            {
+                view.SetWindow(view.MinX, view.MaxX, 0, view.MaxY);
+            }
+            Raise();
+        }
+
+        #endregion
+
+        #region Live mouse
+
+        /// <summary>
+        /// Converts a raw (already accelerated) mouse report into input speed on the applied curve,
+        /// by inverting output speed = input speed × sensitivity. Returns null if it can't be placed.
+        /// </summary>
+        public double? LiveInputSpeed(double dx, double dy, double timeMs)
+        {
+            var applied = selected?.Applied;
+            if (applied == null) return null;
+
+            // undo the driver's per-axis output multipliers (applied after the curve) before measuring speed
+            double lr = dx < 0 ? applied.LRRatio : 1;
+            double ud = dy < 0 ? applied.UDRatio : 1;
+            // the driver allows negative (flipping) sensitivity and Y/X ratios; only their size matters here
+            if (lr <= 0 || ud <= 0 || applied.YXRatio == 0 || applied.Sensitivity == 0) return null;
+            double ux = dx / lr;
+            double uy = dy / (Math.Abs(applied.YXRatio) * ud);
+
+            // same distance the driver uses (rawaccel.hpp calc_speed_whole); the curve scales both axes equally
+            double ax = Math.Abs(ux), ay = Math.Abs(uy), p = applied.LpNorm;
+            double counts = applied.Separate ? (editingY ? ay : ax)
+                : p >= 16 || p <= 0 ? Math.Max(ax, ay)
+                : p == 2 ? Math.Sqrt(ax * ax + ay * ay)
+                : Math.Pow(Math.Pow(ax, p) + Math.Pow(ay, p), 1 / p);
+            if (counts == 0) return null;
+
+            double outSpeed = counts / timeMs / Math.Abs(applied.Sensitivity);
+            var ghost = RawGhost;
+            if (ghost == null) return null;
+
+            double v = Solver.Bisect(x => ghost.Velocity(x), outSpeed, 1e-4, 1e5, logScale: true, clamp: false);
+            return double.IsNaN(v) ? (double?)null : v;
+        }
+
+        private IList<MultiHandleDevice> systemDevices;
+        private DateTime systemDevicesListed;
+
+        /// <summary>
+        /// True when movement from this raw input device goes through the selected profile. Same
+        /// rules as grapher SettingsManager.SetActiveHandles, using the editor's device settings.
+        /// </summary>
+        public bool UsesSelectedProfile(IntPtr handle)
+        {
+            if (selected == null || Config == null) return false;
+            var device = FindDevice(handle);
+            if (device == null) return false;
+
+            bool selectedIsFirst = Config.profiles.Count > 0 && Config.profiles[0] == selected.Profile;
+            var assigned = Config.devices.FirstOrDefault(d => d.id == device.id);
+
+            if (assigned == null) return selectedIsFirst && !Config.defaultDeviceConfig.disable;
+            if (assigned.config.disable) return false;
+            if (assigned.profile == selected.Name) return true;
+
+            // an empty or unknown profile name falls back to the first profile
+            return selectedIsFirst && (string.IsNullOrEmpty(assigned.profile) || Profiles.All(p => p.Name != assigned.profile));
+        }
+
+        private MultiHandleDevice FindDevice(IntPtr handle)
+        {
+            var found = systemDevices?.FirstOrDefault(d => d.handles != null && d.handles.Contains(handle));
+            if (found != null) return found;
+
+            // unknown handle: maybe a mouse plugged in since the last listing (re-list at most every 2 s)
+            if (systemDevices != null && (DateTime.UtcNow - systemDevicesListed).TotalSeconds < 2) return null;
+            systemDevicesListed = DateTime.UtcNow;
+            try
+            {
+                systemDevices = MultiHandleDevice.GetList();
+            }
+            catch (Exception)
+            {
+                systemDevices = new List<MultiHandleDevice>();
+            }
+            return systemDevices.FirstOrDefault(d => d.handles != null && d.handles.Contains(handle));
+        }
+
+        #endregion
+
+        #region Profiles, devices, apply
+
+        public void AddProfile()
+        {
+            if (BlockedByApply()) return;
+            string name = PromptForText?.Invoke("New profile", "Name for the new profile (starts as a copy of the current one):", UniqueName(selected?.Name ?? "profile"));
+            if (string.IsNullOrWhiteSpace(name)) return;
+            name = name.Trim();
+            if (Profiles.Any(p => p.Name == name))
+            {
+                Status = $"A profile named \"{name}\" already exists.";
+                return;
+            }
+
+            var profile = new Profile { name = name };
+            var state = State.Clone();
+            state.WriteTo(profile);
+            Config.profiles.Add(profile);
+            Config.accels.Add(new ManagedAccel(profile));
+
+            var editor = new ProfileEditor(profile, state) { AppliedName = null };
+            Profiles.Add(editor);
+            SelectedProfile = editor;
+            RefreshAll();
+            Status = $"Added profile \"{name}\". Assign it to a device under Devices…";
+        }
+
+        public void RenameProfile()
+        {
+            if (BlockedByApply()) return;
+            if (selected == null) return;
+            string name = PromptForText?.Invoke("Rename profile", "New name:", selected.Name);
+            if (string.IsNullOrWhiteSpace(name)) return;
+            name = name.Trim();
+            if (name == selected.Name) return;
+            if (Profiles.Any(p => p.Name == name))
+            {
+                Status = $"A profile named \"{name}\" already exists.";
+                return;
+            }
+
+            foreach (var d in Config.devices.Where(d => d.profile == selected.Name))
+            {
+                d.profile = name;
+                devicesDirty = true;
+            }
+            selected.Name = name;
+            RefreshAll();
+        }
+
+        private void DeleteProfile()
+        {
+            if (BlockedByApply()) return;
+            if (Profiles.Count <= 1) return;
+            var victim = selected;
+            int index = Profiles.IndexOf(victim);
+
+            foreach (var d in Config.devices.Where(d => d.profile == victim.Name))
+            {
+                // unassigned devices use the first profile
+                d.profile = "";
+                devicesDirty = true;
+            }
+
+            if (victim.AppliedName != null) deletedNames.Add(victim.AppliedName);
+            foreach (var k in capStash.Keys.Where(k => k.Item1 == victim).ToList()) capStash.Remove(k);
+
+            int configIndex = Config.profiles.IndexOf(victim.Profile);
+            Config.profiles.RemoveAt(configIndex);
+            Config.accels.RemoveAt(configIndex);
+            devicesDirty = true;
+
+            Profiles.RemoveAt(index);
+            SelectedProfile = Profiles[Math.Min(index, Profiles.Count - 1)];
+            RefreshAll();
+            Status = $"Deleted profile \"{victim.Name}\" (not written until you Apply).";
+        }
+
+        private string UniqueName(string baseName)
+        {
+            for (int i = 2; ; i++)
+            {
+                string candidate = $"{baseName} {i}";
+                if (Profiles.All(p => p.Name != candidate)) return candidate;
+            }
+        }
+
+        /// <summary> Which devices this profile affects (a profile does nothing until a device uses it). </summary>
+        public string ProfileUsageText
+        {
+            get
+            {
+                if (selected == null || Config?.devices == null) return "";
+                var names = new HashSet<string>(Profiles.Select(p => p.Name));
+                string Dev(DeviceSettings d) => string.IsNullOrEmpty(d.name) ? d.id : d.name;
+
+                var own = Config.devices.Where(d => d.profile == selected.Name).Select(Dev).ToList();
+                if (Profiles.IndexOf(selected) == 0)
+                {
+                    string extra = own.Count > 0 ? " Also assigned to: " + string.Join(", ", own) + "." : "";
+                    return "Default profile: every device without its own profile uses it." + extra;
+                }
+                if (own.Count == 0)
+                {
+                    return "No device uses this profile, so changes here have no effect yet. Assign it to your mouse under Devices…, or click Make default.";
+                }
+                return "Used by: " + string.Join(", ", own) + ".";
+            }
+        }
+
+        /// <summary> Moves the selected profile to the front, where every unassigned device picks it up. </summary>
+        private void MakeDefault()
+        {
+            if (BlockedByApply()) return;
+            int index = Profiles.IndexOf(selected);
+            if (index <= 0) return;
+            var editor = selected;
+
+            int ci = Config.profiles.IndexOf(editor.Profile);
+            var accel = Config.accels[ci];
+            Config.profiles.RemoveAt(ci);
+            Config.accels.RemoveAt(ci);
+            Config.profiles.Insert(0, editor.Profile);
+            Config.accels.Insert(0, accel);
+
+            Profiles.Move(index, 0);
+            devicesDirty = true;
+            RefreshAll();
+            Status = $"\"{editor.Name}\" is now the default profile. Press Apply to use it.";
+        }
+
+        public bool ApplyOnStartup
+        {
+            get => settings.Sidecar.ApplyOnStartup;
+            set
+            {
+                if (settings.Sidecar.ApplyOnStartup == value) return;
+                settings.Sidecar.ApplyOnStartup = value;
+                settings.SaveSidecar();
+                OnPropertyChanged();
+            }
+        }
+
+        public bool ApplyAtSignIn
+        {
+            get => StartupRegistration.IsEnabled;
+            set
+            {
+                string error = StartupRegistration.SetEnabled(value);
+                Status = error == null
+                    ? (value ? "settings.json will be applied each time you sign in to Windows." : "No longer applying settings at Windows sign-in.")
+                    : "Couldn't change the sign-in setting: " + error;
+                OnPropertyChanged();
+            }
+        }
+
+        /// <summary> Startup: send the loaded settings.json to the driver so it is active without pressing Apply. </summary>
+        public async Task ActivateOnStartupAsync()
+        {
+            if (!settings.Sidecar.ApplyOnStartup || !settings.LoadedFromFile) return;
+            var loaded = loadedStates.ToList();
+            string error = await settings.ActivateAsync();
+            if (error == null)
+            {
+                // the driver now runs what was loaded (edits made meanwhile stay unapplied)
+                foreach (var (editor, state) in loaded)
+                {
+                    if (Profiles.Contains(editor)) editor.Applied = state;
+                }
+                RebuildParameters();
+                RefreshAll();
+            }
+            Status = error == null
+                ? $"Applied {SettingsService.SettingsFileName} to the driver on startup."
+                : "Couldn't apply settings on startup: " + error;
+        }
+
+        /// <summary> True (with a status message) while Apply is writing to the driver. </summary>
+        public bool BlockedByApply()
+        {
+            if (!applying) return false;
+            Status = "Please wait until Apply has finished.";
+            return true;
+        }
+
+        public bool IsApplying => applying;
+
+        public void DevicesChanged()
+        {
+            devicesDirty = true;
+            RefreshAll();
+            Status = "Device settings changed (not written until you Apply).";
+        }
+
+        private async Task ApplyAsync()
+        {
+            applying = true;
+            CommandManager.InvalidateRequerySuggested();
+            try
+            {
+                foreach (var editor in Profiles)
+                {
+                    int i = Config.profiles.IndexOf(editor.Profile);
+                    editor.Profile.name = editor.Name;
+                    editor.Current.WriteTo(editor.Profile);
+                    Config.SetProfileAt(i, editor.Profile);
+                }
+
+                string invalid = Config.Errors();
+                if (invalid != null)
+                {
+                    Status = invalid;
+                    System.Windows.MessageBox.Show(invalid, "Raw Accel", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
+                    return;
+                }
+
+                // what is being written; edits made while the driver write runs stay unapplied
+                var written = Profiles.Select(e => (Editor: e, State: e.Current, Name: e.Name)).ToList();
+                var deletedNow = deletedNames.ToList();
+
+                // changed on a copy, so a failed Apply leaves the saved control points as they were
+                var sidecar = settings.Sidecar.Copy();
+                foreach (var name in deletedNames) sidecar.Profiles.Remove(name);
+                foreach (var editor in Profiles)
+                {
+                    if (editor.AppliedName != null) sidecar.Profiles.Remove(editor.AppliedName);
+                }
+                foreach (var editor in Profiles)
+                {
+                    var entry = editor.Current.ToSidecarEntry();
+                    if (entry != null) sidecar.Profiles[editor.Name] = entry;
+                }
+
+                string errors = await settings.ApplyAsync(sidecar);
+                if (errors != null)
+                {
+                    Status = errors;
+                    System.Windows.MessageBox.Show(errors, "Raw Accel", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
+                    return;
+                }
+
+                foreach (var w in written)
+                {
+                    w.Editor.Applied = w.State;
+                    w.Editor.AppliedName = w.Name;
+                }
+                devicesDirty = false;
+                foreach (var name in deletedNow) deletedNames.Remove(name);
+                Status = $"Applied at {DateTime.Now:T} and saved to {settings.SettingsPath}";
+            }
+            catch (Exception e)
+            {
+                Status = "Apply failed: " + e.Message;
+                System.Windows.MessageBox.Show(e.Message, "Raw Accel", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Error);
+            }
+            finally
+            {
+                applying = false;
+                RebuildParameters();
+                RefreshAll();
+            }
+        }
+
+        #endregion
+    }
+}
