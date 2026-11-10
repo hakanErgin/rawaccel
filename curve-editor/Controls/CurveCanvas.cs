@@ -80,6 +80,8 @@ namespace CurveEditor.Controls
         private static readonly Pen GridPen = Frozen(new Pen(new SolidColorBrush(Color.FromRgb(0x30, 0x34, 0x3A)), 1));
         private static readonly Pen BaselinePen = Frozen(new Pen(new SolidColorBrush(Color.FromRgb(0x5A, 0x60, 0x6A)), 1));
         private static readonly Pen CurvePen = Frozen(new Pen(new SolidColorBrush(Color.FromRgb(0x4F, 0xC3, 0xF7)), 2.2) { LineJoin = PenLineJoin.Round });
+        private static readonly Brush VerticalBrush = Frozen(new SolidColorBrush(Color.FromArgb(0xC0, 0x4F, 0xC3, 0xF7)));
+        private static readonly Pen VerticalPen = Frozen(new Pen(VerticalBrush, 1.4) { DashStyle = new DashStyle(new double[] { 1, 2.5 }, 0), DashCap = PenLineCap.Round });
         private static readonly Pen GhostPen = Frozen(new Pen(new SolidColorBrush(Color.FromRgb(0x9A, 0xA0, 0xA6)), 1.4) { DashStyle = new DashStyle(new double[] { 4, 3 }, 0) });
         private static readonly Pen LevelPen = Frozen(new Pen(new SolidColorBrush(Color.FromArgb(0x90, 0xFF, 0xB7, 0x4D)), 1) { DashStyle = new DashStyle(new double[] { 6, 4 }, 0) });
         private static readonly Pen HandleOutline = Frozen(new Pen(new SolidColorBrush(Color.FromRgb(0x1B, 0x1D, 0x21)), 1.5));
@@ -126,6 +128,9 @@ namespace CurveEditor.Controls
 
         public ICurve Ghost { get; set; }
 
+        /// <summary> What vertical movement gets, when it differs from the main (horizontal) curve. </summary>
+        public ICurve VerticalCurve { get; set; }
+
         public ChartKind Kind { get; set; } = ChartKind.Sensitivity;
 
         /// <summary> Sensitivity where the curve starts (highlighted grid line). </summary>
@@ -148,10 +153,16 @@ namespace CurveEditor.Controls
         /// <summary> Input speed of the latest mouse movement, and when it happened. </summary>
         public double? LiveSpeed { get; set; }
 
+        /// <summary> Applied curve for the latest movement's direction (falls back to the ghost). </summary>
+        public ICurve LiveCurve { get; set; }
+
         public DateTime LiveTime { get; set; }
 
         /// <summary> Fastest input speed of the last 5 seconds of movement (kept after you stop). </summary>
         public double? PeakSpeed { get; set; }
+
+        /// <summary> Applied curve for the peak movement's direction (falls back to the ghost). </summary>
+        public ICurve PeakCurve { get; set; }
 
         public bool ShowPeak { get; set; } = true;
 
@@ -246,7 +257,9 @@ namespace CurveEditor.Controls
             dc.PushClip(new RectangleGeometry(plot));
 
             DrawCurve(dc, Ghost, GhostPen);
+            DrawCurve(dc, VerticalCurve, VerticalPen);
             DrawCurve(dc, Curve, CurvePen);
+            DrawVerticalLabel(dc, plot);
 
             if (HandlesVisible) DrawHandles(dc, plot);
 
@@ -308,6 +321,21 @@ namespace CurveEditor.Controls
             dc.PushTransform(new RotateTransform(-90, 0, 0));
             dc.DrawText(yl, new Point(-(plot.Top + (plot.Height + yl.Width) / 2), 4));
             dc.Pop();
+        }
+
+        /// <summary> Names the vertical-movement curve near the right edge, where it is drawn. </summary>
+        private void DrawVerticalLabel(DrawingContext dc, Rect plot)
+        {
+            if (VerticalCurve == null) return;
+            var t = Text("vertical", 11, VerticalBrush);
+            double sx = plot.Right - t.Width - 8;
+            double x = View.ScreenToX(sx);
+            if (x <= 0) return;
+            double y = Value(VerticalCurve, x);
+            if (double.IsNaN(y) || double.IsInfinity(y)) return;
+            double sy = View.YToScreen(y);
+            if (sy < plot.Top || sy > plot.Bottom) return;
+            dc.DrawText(t, new Point(sx, Math.Max(plot.Top, sy - t.Height - 3)));
         }
 
         private void DrawCurve(DrawingContext dc, ICurve curve, Pen pen)
@@ -408,9 +436,10 @@ namespace CurveEditor.Controls
 
         private void DrawPeak(DrawingContext dc, Rect plot)
         {
-            if (!ShowPeak || !(PeakSpeed is double v) || Ghost == null) return;
+            var curve = PeakCurve ?? Ghost;
+            if (!ShowPeak || !(PeakSpeed is double v) || curve == null) return;
 
-            double sens = Value(Ghost, v);
+            double sens = Value(curve, v);
             double sx = View.XToScreen(v);
             bool inside = sx >= plot.Left && sx <= plot.Right;
 
@@ -438,11 +467,12 @@ namespace CurveEditor.Controls
 
         private void DrawLive(DrawingContext dc)
         {
-            if (!(LiveSpeed is double v) || Ghost == null) return;
+            var curve = LiveCurve ?? Ghost;
+            if (!(LiveSpeed is double v) || curve == null) return;
             double age = (DateTime.UtcNow - LiveTime).TotalSeconds;
             if (age > 1.5) return;
 
-            double y = Value(Ghost, v);
+            double y = Value(curve, v);
             if (double.IsNaN(y) || double.IsInfinity(y)) return;
             var p = new Point(View.XToScreen(v), View.YToScreen(y));
             dc.PushOpacity(Math.Max(0, 1 - age / 1.5));

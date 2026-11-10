@@ -10,7 +10,7 @@ namespace CurveEditor.Core.Interaction
     {
         private readonly double windowSeconds;
         // monotonic deque: values decrease from front to back, so the front is the window maximum
-        private readonly LinkedList<(double Time, double Value)> samples = new LinkedList<(double, double)>();
+        private readonly LinkedList<(double Time, double Value, object Tag)> samples = new LinkedList<(double, double, object)>();
 
         public PeakTracker(double windowSeconds = 5)
         {
@@ -23,10 +23,13 @@ namespace CurveEditor.Core.Interaction
         /// <summary> Time (seconds) of the sample that set <see cref="Peak"/>. </summary>
         public double PeakTime { get; private set; }
 
-        public void Add(double time, double value)
+        /// <summary> Whatever was passed with the sample that set <see cref="Peak"/>. </summary>
+        public object PeakTag { get; private set; }
+
+        public void Add(double time, double value, object tag = null)
         {
             while (samples.Count > 0 && samples.Last.Value.Value <= value) samples.RemoveLast();
-            samples.AddLast((time, value));
+            samples.AddLast((time, value, tag));
             Update(time);
         }
 
@@ -38,6 +41,7 @@ namespace CurveEditor.Core.Interaction
             {
                 Peak = samples.First.Value.Value;
                 PeakTime = samples.First.Value.Time;
+                PeakTag = samples.First.Value.Tag;
             }
         }
 
@@ -45,6 +49,7 @@ namespace CurveEditor.Core.Interaction
         {
             samples.Clear();
             Peak = null;
+            PeakTag = null;
         }
     }
 }

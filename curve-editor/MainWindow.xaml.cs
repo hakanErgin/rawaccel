@@ -8,6 +8,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using CurveEditor.Controls;
+using CurveEditor.Core.Curves;
 using CurveEditor.Core.Interaction;
 using CurveEditor.Services;
 using CurveEditor.ViewModels;
@@ -59,6 +60,7 @@ namespace CurveEditor
             {
                 peak.Update(clock.Elapsed.TotalSeconds);
                 Chart.PeakSpeed = peak.Peak;
+                UpdateLiveCurves();
                 Chart.InvalidateVisual();
                 // run until the 5 s peak window has settled
                 if ((DateTime.UtcNow - Chart.LiveTime).TotalSeconds > 5.5) liveTimer.Stop();
@@ -129,19 +131,34 @@ namespace CurveEditor
 
         private void OnRawMouse(IntPtr device, double dx, double dy, double timeMs)
         {
-            var speed = vm.LiveInputSpeed(dx, dy, timeMs);
-            if (speed == null) return;
-            Chart.LiveSpeed = speed;
-            peak.Add(clock.Elapsed.TotalSeconds, speed.Value);
+            // where output speed is ambiguous, stay near the last movement (if it was recent)
+            double? previous = lastLive is LiveSample l && (DateTime.UtcNow - Chart.LiveTime).TotalSeconds < 0.5 ? l.Speed : (double?)null;
+            var live = vm.PlaceLiveInput(dx, dy, timeMs, previous);
+            if (live == null) return;
+            lastLive = live;
+            Chart.LiveSpeed = live.Value.Speed;
+            peak.Add(clock.Elapsed.TotalSeconds, live.Value.Speed, live.Value);
             Chart.PeakSpeed = peak.Peak;
+            UpdateLiveCurves();
             Chart.LiveTime = DateTime.UtcNow;
             if (!liveTimer.IsEnabled) liveTimer.Start();
         }
 
+        private LiveSample? lastLive;
+
+        /// <summary> Rebuilds the live and peak markers' curves from the current display settings. </summary>
+        private void UpdateLiveCurves()
+        {
+            Chart.LiveCurve = lastLive is LiveSample l ? vm.LiveCurve(l) : null;
+            Chart.PeakCurve = peak.PeakTag is LiveSample p ? vm.LiveCurve(p) : null;
+        }
+
         private void SyncChart()
         {
+            UpdateLiveCurves();
             Chart.Curve = vm.Curve;
             Chart.Ghost = vm.Ghost;
+            Chart.VerticalCurve = vm.VerticalCurve;
             Chart.Handles = vm.Handles;
             Chart.SelectedHandleId = vm.SelectedHandleId;
             Chart.Kind = vm.ChartKind;
