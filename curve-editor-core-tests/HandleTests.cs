@@ -91,7 +91,11 @@ namespace CurveEditor.Core.Tests
                 var target = new Point2(h.Position.X + dx, h.Position.Y + dy);
 
                 var after = set.Drag(args, h.Id, target, Ctx);
-                var moved = set.GetHandles(after, Ctx).Single(q => q.Id == h.Id);
+                // a sliding handle's new speed is remembered by the editor and handed back in the context
+                var ctx = h.SlidesAlongCurve
+                    ? new HandleContext(Ctx.AnchorX, Ctx.EdgeX, new Dictionary<string, double> { [h.Id] = target.X })
+                    : Ctx;
+                var moved = set.GetHandles(after, ctx).Single(q => q.Id == h.Id);
 
                 if (h.Constraint != HandleConstraint.YOnly)
                 {
@@ -270,6 +274,38 @@ namespace CurveEditor.Core.Tests
                     AssertSameCurve(args, restored, 1e-12);
                 }
             }
+        }
+
+        [TestMethod]
+        public void BendSlidesAlongCurveAndKeepsCap()
+        {
+            var args = HandleSets.For(CurveMode.Classic).Normalize(new CurveArgs { Mode = CurveMode.Classic, Gain = true, Acceleration = 0.02, CapY = 1.6, CapMode = CapType.Output });
+            var set = HandleSets.For(CurveMode.Classic);
+            var bend = Find(args, HandleIds.Bend);
+            var cap = Find(args, HandleIds.Cap).Position;
+            Assert.IsTrue(bend.SlidesAlongCurve);
+            Assert.AreEqual(HandleConstraint.Free, bend.Constraint);
+
+            // move the bend point to 1/4 of the way to the cap, a bit higher than the curve there
+            double x = cap.X / 4;
+            double y = HandleSets.Eval(args, x) + 0.02;
+            var after = set.Drag(args, HandleIds.Bend, new Point2(x, y), Ctx);
+
+            Assert.AreEqual(y, HandleSets.Eval(after, x), 1e-6, "curve passes through the new bend point");
+            var capAfter = Find(after, HandleIds.Cap).Position;
+            Assert.AreEqual(cap.X, capAfter.X, 1e-6);
+            Assert.AreEqual(cap.Y, capAfter.Y, 1e-12);
+
+            var ctx = new HandleContext(Ctx.AnchorX, Ctx.EdgeX, new Dictionary<string, double> { [HandleIds.Bend] = x });
+            Assert.AreEqual(x, set.GetHandles(after, ctx).Single(h => h.Id == HandleIds.Bend).Position.X, 1e-12);
+        }
+
+        [TestMethod]
+        public void UncappedAccelPointSlides()
+        {
+            var args = new CurveArgs { Mode = CurveMode.Classic, Acceleration = 0.01, CapY = 0, CapMode = CapType.Output };
+            var after = HandleSets.For(CurveMode.Classic).Drag(args, HandleIds.Point, new Point2(12, 1.4), Ctx);
+            Assert.AreEqual(1.4, HandleSets.Eval(after, 12), 1e-9, "curve passes through the point at the new speed");
         }
     }
 }

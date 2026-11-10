@@ -221,13 +221,13 @@ namespace CurveEditor.Core.Handles
             else
             {
                 refX = AnchorX(a, ctx);
-                list.Add(new Handle(HandleIds.Point, "Accel", new Point2(refX, HandleSets.Eval(a, refX)), HandleConstraint.YOnly,
-                    "Acceleration: drag up or down to steepen the curve", nameof(CurveArgs.Acceleration)));
+                list.Add(new Handle(HandleIds.Point, "Accel", new Point2(refX, HandleSets.Eval(a, refX)), HandleConstraint.Free,
+                    "Acceleration: drag up or down to steepen the curve, sideways to pick the speed it pins", nameof(CurveArgs.Acceleration)) { SlidesAlongCurve = true });
             }
 
-            double xb = BendX(off, refX);
-            list.Add(new Handle(HandleIds.Bend, "Bend", new Point2(xb, HandleSets.Eval(a, xb)), HandleConstraint.YOnly,
-                "Exponent: curvature between offset and the cap/accel handle", nameof(CurveArgs.ExponentClassic), nameof(CurveArgs.Acceleration)));
+            double xb = BendX(off, refX, ctx.X(HandleIds.Bend, double.NaN));
+            list.Add(new Handle(HandleIds.Bend, "Bend", new Point2(xb, HandleSets.Eval(a, xb)), HandleConstraint.Free,
+                "Exponent: drag up or down to change the curvature, sideways to move the bend point", nameof(CurveArgs.ExponentClassic), nameof(CurveArgs.Acceleration)) { SlidesAlongCurve = true });
 
             return list;
         }
@@ -263,7 +263,7 @@ namespace CurveEditor.Core.Handles
                 }
                 case HandleIds.Point:
                 {
-                    double x = AnchorX(a, ctx);
+                    double x = AnchorClamp(a, target.X);
                     double y = Math.Max(target.Y, 1 + 1e-6);
                     a.Acceleration = AccelFromPoint(x, y, p, a.InputOffset);
                     return a;
@@ -282,7 +282,7 @@ namespace CurveEditor.Core.Handles
                         refY = HandleSets.Eval(a, refX);
                     }
 
-                    double xb = BendX(a.InputOffset, refX);
+                    double xb = BendX(a.InputOffset, refX, target.X);
                     var trial = a.Clone();
 
                     double Apply(double exp)
@@ -303,10 +303,19 @@ namespace CurveEditor.Core.Handles
             }
         }
 
-        private static double BendX(double off, double refX) => off + (refX - off) / 2;
+        /// <summary> Bend point: the chosen speed kept strictly between offset and the reference (default halfway). </summary>
+        private static double BendX(double off, double refX, double chosen)
+        {
+            double span = refX - off;
+            if (double.IsNaN(chosen)) return off + span / 2;
+            return HandleSets.Clamp(chosen, off + span * 0.02, refX - span * 0.02);
+        }
+
+        private static double AnchorClamp(CurveArgs a, double x) =>
+            Math.Max(x, a.InputOffset + Math.Max(1, a.InputOffset * 0.1));
 
         private static double AnchorX(CurveArgs a, HandleContext ctx) =>
-            Math.Max(ctx.AnchorX, a.InputOffset + Math.Max(1, a.InputOffset * 0.1));
+            AnchorClamp(a, ctx.X(HandleIds.Point, ctx.AnchorX));
 
         internal static double BaseFn(double x, double accel, double p, double off) =>
             Math.Pow(accel, p - 1) * Math.Pow(x - off, p) / x;
@@ -407,14 +416,14 @@ namespace CurveEditor.Core.Handles
             }
             else
             {
-                refX = ctx.AnchorX;
-                list.Add(new Handle(HandleIds.Point, "Scale", new Point2(refX, HandleSets.Eval(a, refX)), HandleConstraint.YOnly,
-                    "Scale: drag up or down to raise the curve", nameof(CurveArgs.Scale)));
+                refX = PowerAnchorX(ctx.X(HandleIds.Point, ctx.AnchorX));
+                list.Add(new Handle(HandleIds.Point, "Scale", new Point2(refX, HandleSets.Eval(a, refX)), HandleConstraint.Free,
+                    "Scale: drag up or down to raise the curve, sideways to pick the speed it pins", nameof(CurveArgs.Scale)) { SlidesAlongCurve = true });
             }
 
-            double xb = refX / 2;
-            list.Add(new Handle(HandleIds.Bend, "Bend", new Point2(xb, HandleSets.Eval(a, xb)), HandleConstraint.YOnly,
-                "Exponent: curvature below the cap/scale handle", nameof(CurveArgs.ExponentPower), nameof(CurveArgs.Scale)));
+            double xb = PowerBendX(refX, ctx.X(HandleIds.Bend, double.NaN));
+            list.Add(new Handle(HandleIds.Bend, "Bend", new Point2(xb, HandleSets.Eval(a, xb)), HandleConstraint.Free,
+                "Exponent: drag up or down to change the curvature, sideways to move the bend point", nameof(CurveArgs.ExponentPower), nameof(CurveArgs.Scale)) { SlidesAlongCurve = true });
 
             return list;
         }
@@ -442,7 +451,7 @@ namespace CurveEditor.Core.Handles
                 }
                 case HandleIds.Point:
                 {
-                    double x = ctx.AnchorX;
+                    double x = PowerAnchorX(target.X);
                     a.Scale = ScaleThrough(a, x, Math.Max(target.Y, 1e-4));
                     return a;
                 }
@@ -456,11 +465,11 @@ namespace CurveEditor.Core.Handles
                     }
                     else
                     {
-                        refX = ctx.AnchorX;
+                        refX = PowerAnchorX(ctx.X(HandleIds.Point, ctx.AnchorX));
                         refY = HandleSets.Eval(a, refX);
                     }
 
-                    double xb = refX / 2;
+                    double xb = PowerBendX(refX, target.X);
                     var trial = a.Clone();
 
                     double Apply(double exp)
@@ -480,6 +489,11 @@ namespace CurveEditor.Core.Handles
                     return a;
             }
         }
+
+        private static double PowerAnchorX(double x) => Math.Max(x, 1e-2);
+
+        private static double PowerBendX(double refX, double chosen) =>
+            double.IsNaN(chosen) ? refX / 2 : HandleSets.Clamp(chosen, refX * 0.02, refX * 0.98);
 
         private static CurveArgs Uncapped(CurveArgs a)
         {
@@ -531,15 +545,15 @@ namespace CurveEditor.Core.Handles
         {
             double off = a.InputOffset;
             double xk = KneeX(a);
-            double xl = Math.Max(ctx.EdgeX, xk * 1.2);
+            double xl = ctx.X(HandleIds.Limit, Math.Max(ctx.EdgeX, xk * 1.2));
             return new[]
             {
                 new Handle(HandleIds.Offset, "Offset", new Point2(off, 1), HandleConstraint.XOnly,
                     "Input offset: speed where acceleration starts", nameof(CurveArgs.InputOffset)),
                 new Handle(HandleIds.Knee, "Decay", new Point2(xk, HandleSets.Eval(a, xk)), HandleConstraint.XOnly,
                     "Decay rate: drag left to reach the limit sooner", nameof(CurveArgs.DecayRate)),
-                new Handle(HandleIds.Limit, "Limit", new Point2(xl, a.Limit), HandleConstraint.YOnly,
-                    "Limit: sensitivity the curve approaches", nameof(CurveArgs.Limit)) { Kind = HandleKind.Level },
+                new Handle(HandleIds.Limit, "Limit", new Point2(xl, a.Limit), HandleConstraint.Free,
+                    "Limit: sensitivity the curve approaches", nameof(CurveArgs.Limit)) { Kind = HandleKind.Level, SlidesAlongCurve = true },
             };
         }
 
@@ -621,18 +635,18 @@ namespace CurveEditor.Core.Handles
         public IReadOnlyList<Handle> GetHandles(CurveArgs a, HandleContext ctx)
         {
             double xg = GammaX(a);
-            double xs = SmoothX(a);
-            double xm = Math.Max(ctx.EdgeX, xs * 1.2);
+            double xs = SmoothHandleX(a, ctx.X(HandleIds.Smooth, double.NaN));
+            double xm = ctx.X(HandleIds.Motivity, Math.Max(ctx.EdgeX, SmoothX(a) * 1.2));
             return new[]
             {
                 new Handle(HandleIds.Sync, "Sync", new Point2(a.SyncSpeed, HandleSets.Eval(a, a.SyncSpeed)), HandleConstraint.XOnly,
                     "Sync speed: centre of the transition", nameof(CurveArgs.SyncSpeed)),
                 new Handle(HandleIds.Gamma, "Gamma", new Point2(xg, HandleSets.Eval(a, xg)), HandleConstraint.XOnly,
                     "Gamma: drag toward the sync point for a faster transition", nameof(CurveArgs.Gamma)),
-                new Handle(HandleIds.Smooth, "Smooth", new Point2(xs, HandleSets.Eval(a, xs)), HandleConstraint.YOnly,
-                    "Smoothness: how gently the curve approaches motivity", nameof(CurveArgs.Smooth)),
-                new Handle(HandleIds.Motivity, "Motivity", new Point2(xm, a.Motivity), HandleConstraint.YOnly,
-                    "Motivity: maximum sensitivity (minimum is its reciprocal)", nameof(CurveArgs.Motivity)) { Kind = HandleKind.Level },
+                new Handle(HandleIds.Smooth, "Smooth", new Point2(xs, HandleSets.Eval(a, xs)), HandleConstraint.Free,
+                    "Smoothness: drag up or down for how gently the curve approaches motivity, sideways to move the point", nameof(CurveArgs.Smooth)) { SlidesAlongCurve = true },
+                new Handle(HandleIds.Motivity, "Motivity", new Point2(xm, a.Motivity), HandleConstraint.Free,
+                    "Motivity: maximum sensitivity (minimum is its reciprocal)", nameof(CurveArgs.Motivity)) { Kind = HandleKind.Level, SlidesAlongCurve = true },
             };
         }
 
@@ -652,7 +666,7 @@ namespace CurveEditor.Core.Handles
                 }
                 case HandleIds.Smooth:
                 {
-                    double xs = SmoothX(a);
+                    double xs = SmoothHandleX(a, target.X);
                     var trial = a.Clone();
                     double best = Solver.Bisect(s =>
                     {
@@ -672,6 +686,10 @@ namespace CurveEditor.Core.Handles
 
         /// <summary> Halfway (in log space) from sync speed to where the linear-clamp curve reaches motivity. </summary>
         internal static double GammaX(CurveArgs a) => a.SyncSpeed * Math.Pow(a.Motivity, 1 / (2 * a.Gamma));
+
+        /// <summary> Smoothness handle speed: the chosen one (kept above the sync speed) or where the curve reaches motivity. </summary>
+        internal static double SmoothHandleX(CurveArgs a, double chosen) =>
+            double.IsNaN(chosen) ? SmoothX(a) : Math.Max(chosen, a.SyncSpeed * 1.05);
 
         /// <summary> Where the linear-clamp curve reaches motivity. </summary>
         internal static double SmoothX(CurveArgs a) => a.SyncSpeed * Math.Pow(a.Motivity, 1 / a.Gamma);

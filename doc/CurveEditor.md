@@ -31,6 +31,8 @@ The driver forgets its settings when Windows restarts. Tick *Apply settings when
 
 ## Handles per mode
 
+Handles drawn on the curve move in both directions. Up and down changes the value (exponent, acceleration, smoothness and so on). Left and right slides the handle along the curve to choose where that value is pinned, for example where the bend sits. Offset, Decay, Gamma, Sync and Jump smoothness set a speed, so they move sideways and follow the curve. The limit and motivity lines can also be grabbed anywhere along their length.
+
 | Mode | Handles |
 |---|---|
 | Classic | **Offset** (where acceleration starts). **Cap** (where the cap takes effect and its level; turn off *Cap* for an uncapped curve, which gets an **Accel** handle instead). **Bend** (exponent). |

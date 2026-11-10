@@ -41,6 +41,13 @@ namespace CurveEditor.Core.Handles
 
         public HandleKind Kind { get; set; } = HandleKind.Point;
 
+        /// <summary>
+        /// The handle's speed is a free choice of where on the curve it sits (e.g. the bend point):
+        /// dragging sideways slides it along the curve, dragging up/down changes its parameter.
+        /// The chosen speed is kept in <see cref="HandleContext"/>.
+        /// </summary>
+        public bool SlidesAlongCurve { get; set; }
+
         public string Description { get; }
 
         /// <summary> Names of <see cref="CurveArgs"/> properties this handle changes (for readouts). </summary>
@@ -54,11 +61,18 @@ namespace CurveEditor.Core.Handles
     /// </summary>
     public sealed class HandleContext
     {
-        public HandleContext(double anchorX, double edgeX)
+        private readonly IReadOnlyDictionary<string, double> chosenX;
+
+        public HandleContext(double anchorX, double edgeX, IReadOnlyDictionary<string, double> chosenX = null)
         {
             AnchorX = anchorX;
             EdgeX = edgeX;
+            this.chosenX = chosenX;
         }
+
+        /// <summary> Speed chosen for a sliding handle, or <paramref name="fallback"/> if it hasn't been moved. </summary>
+        public double X(string handleId, double fallback) =>
+            chosenX != null && chosenX.TryGetValue(handleId, out double x) && !double.IsNaN(x) ? x : fallback;
 
         /// <summary> Speed used for on-curve handles without a natural position (about 60% across the view). </summary>
         public double AnchorX { get; }

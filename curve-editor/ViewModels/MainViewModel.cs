@@ -206,6 +206,7 @@ namespace CurveEditor.ViewModels
                 if (value == null || !Set(ref selected, value)) return;
                 editingY = false;
                 selectedHandleId = null;
+                handleX.Clear();
                 OnPropertyChanged(nameof(EditingY));
                 RebuildParameters();
                 RefreshAll();
@@ -287,9 +288,12 @@ namespace CurveEditor.ViewModels
                 {
                     RecomputeContext();
                 }
-                return context;
+                return handleX.Count == 0 ? context : new HandleContext(context.AnchorX, context.EdgeX, handleX);
             }
         }
+
+        /// <summary> Speeds the user slid handles to (bend point, accel point, …), by handle id. </summary>
+        private readonly Dictionary<string, double> handleX = new Dictionary<string, double>();
 
         private void RecomputeContext()
         {
@@ -349,6 +353,7 @@ namespace CurveEditor.ViewModels
             {
                 if (!Set(ref editingY, value)) return;
                 selectedHandleId = null;
+                handleX.Clear();
                 RebuildParameters();
                 RefreshAll();
                 ResetView();
@@ -636,6 +641,7 @@ namespace CurveEditor.ViewModels
 
             ReplaceCurve(next, pushUndo: true, what: "mode");
             selectedHandleId = null;
+            handleX.Clear();
             if (mode == CurveMode.Synchronous && !view.LogX) LogX = true;
             RebuildParameters();
             RefreshAll();
@@ -654,6 +660,7 @@ namespace CurveEditor.ViewModels
             next.SmoothLut = true;
             ReplaceCurve(next, pushUndo: true, what: "custom curve");
             selectedHandleId = null;
+            handleX.Clear();
             RebuildParameters();
             RefreshAll();
             Status = "Converted to a custom curve. Drag points, double-click to add, right-click to delete.";
@@ -670,8 +677,19 @@ namespace CurveEditor.ViewModels
         {
             if (CurrentArgs == null) return;
 
+            var handle = Handles.FirstOrDefault(h => h.Id == id);
+            bool slid = handle != null && handle.SlidesAlongCurve && target.X != handle.Position.X;
+
             var next = HandleSets.For(CurrentArgs.Mode).Drag(CurrentArgs, id, ToCurveSpace(target), Context);
-            if (next.Equals(CurrentArgs)) return;
+
+            // sliding a handle along the curve moves where it sits, even if no parameter changes
+            if (handle != null && handle.SlidesAlongCurve) handleX[id] = target.X;
+
+            if (next.Equals(CurrentArgs))
+            {
+                if (slid) RefreshAll(parametersOnly: true);
+                return;
+            }
 
             if (isNudge)
             {
@@ -975,6 +993,7 @@ namespace CurveEditor.ViewModels
         /// </summary>
         public void ResetView()
         {
+            handleX.Clear();
             double maxX = DefaultMaxSpeed;
             view.SetWindow(view.LogX ? 0.1 : -0.04 * maxX, maxX, view.MinY, view.MaxY);
             RecomputeContext();
