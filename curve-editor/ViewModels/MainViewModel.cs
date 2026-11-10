@@ -193,9 +193,10 @@ namespace CurveEditor.ViewModels
                 settings.Sidecar.Profiles.TryGetValue(p.name, out var saved);
                 var state = ProfileState.FromProfile(p, saved);
                 var editor = new ProfileEditor(p, state);
-                if (active != null)
+                if (settings.LoadedFromFile)
                 {
-                    var running = active.profiles.FirstOrDefault(a => a.name == p.name);
+                    // unknown (null) if the driver can't be read: don't claim the file is applied
+                    var running = active?.profiles.FirstOrDefault(a => a.name == p.name);
                     settings.Sidecar.Profiles.TryGetValue(p.name, out var savedRunning);
                     editor.Applied = running == null ? null : ProfileState.FromProfile(running, savedRunning);
                 }
@@ -1190,9 +1191,10 @@ namespace CurveEditor.ViewModels
             // undo the driver's per-axis output multipliers (applied after the curve) before measuring speed
             double lr = dx < 0 ? applied.LRRatio : 1;
             double ud = dy < 0 ? applied.UDRatio : 1;
-            if (lr <= 0 || ud <= 0 || applied.YXRatio <= 0 || applied.Sensitivity <= 0) return null;
+            // the driver allows negative (flipping) sensitivity and Y/X ratios; only their size matters here
+            if (lr <= 0 || ud <= 0 || applied.YXRatio == 0 || applied.Sensitivity == 0) return null;
             double ux = dx / lr;
-            double uy = dy / (applied.YXRatio * ud);
+            double uy = dy / (Math.Abs(applied.YXRatio) * ud);
 
             // same distance the driver uses (rawaccel.hpp calc_speed_whole); the curve scales both axes equally
             double ax = Math.Abs(ux), ay = Math.Abs(uy), p = applied.LpNorm;
@@ -1202,7 +1204,7 @@ namespace CurveEditor.ViewModels
                 : Math.Pow(Math.Pow(ax, p) + Math.Pow(ay, p), 1 / p);
             if (counts == 0) return null;
 
-            double outSpeed = counts / timeMs / applied.Sensitivity;
+            double outSpeed = counts / timeMs / Math.Abs(applied.Sensitivity);
             var ghost = RawGhost;
             if (ghost == null) return null;
 

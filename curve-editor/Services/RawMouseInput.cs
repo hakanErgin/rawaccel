@@ -43,6 +43,9 @@ namespace CurveEditor.Services
         /// </summary>
         public event Action<IntPtr, double, double, double> Moved;
 
+        /// <summary> Which devices to report (by raw input handle); null reports every mouse. </summary>
+        public Func<IntPtr, bool> Accept { get; set; }
+
         private IntPtr Hook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
         {
             if (msg != WM_INPUT) return IntPtr.Zero;
@@ -57,6 +60,9 @@ namespace CurveEditor.Services
 
             if (input.Header.Type != 0 || (input.Mouse.Flags & MOUSE_MOVE_ABSOLUTE) != 0) return IntPtr.Zero;
             if (input.Mouse.LastX == 0 && input.Mouse.LastY == 0) return IntPtr.Zero;
+
+            // filter before timing, so reports from other mice don't shorten this one's interval
+            if (Accept != null && !Accept(input.Header.Device)) return IntPtr.Zero;
 
             double time = stopwatch.Elapsed.TotalMilliseconds;
             stopwatch.Restart();

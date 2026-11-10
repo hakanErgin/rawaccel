@@ -121,14 +121,14 @@ namespace CurveEditor
             if (PresentationSource.FromVisual(this) is HwndSource source)
             {
                 rawInput = new RawMouseInput(source);
+                // other mice may use other profiles (or none): only show movement this profile handles
+                rawInput.Accept = vm.UsesSelectedProfile;
                 rawInput.Moved += OnRawMouse;
             }
         }
 
         private void OnRawMouse(IntPtr device, double dx, double dy, double timeMs)
         {
-            // other mice may use other profiles (or none): only show movement this profile handles
-            if (!vm.UsesSelectedProfile(device)) return;
             var speed = vm.LiveInputSpeed(dx, dy, timeMs);
             if (speed == null) return;
             Chart.LiveSpeed = speed;
