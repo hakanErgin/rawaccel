@@ -126,6 +126,12 @@ namespace CurveEditor.Controls
 
         public ChartKind Kind { get; set; } = ChartKind.Sensitivity;
 
+        /// <summary> Sensitivity where the curve starts (highlighted grid line). </summary>
+        public double BaselineY { get; set; } = 1;
+
+        /// <summary> Whether the values include the base sensitivity (affects the axis label). </summary>
+        public bool IncludesSensitivity { get; set; } = true;
+
         /// <summary> Handles can only be edited in the sensitivity view. </summary>
         public bool HandlesVisible => Kind == ChartKind.Sensitivity;
 
@@ -161,7 +167,7 @@ namespace CurveEditor.Controls
         public event EventHandler ViewChanged;
 
         public string YAxisLabel =>
-            Kind == ChartKind.Sensitivity ? "Sensitivity (curve multiplier)" :
+            Kind == ChartKind.Sensitivity ? (IncludesSensitivity ? "Sensitivity (base × curve)" : "Curve multiplier") :
             Kind == ChartKind.Velocity ? "Output speed (counts/ms)" : "Gain (d output / d input)";
 
         public double Value(ICurve c, double x)
@@ -280,14 +286,14 @@ namespace CurveEditor.Controls
             foreach (double y in View.YTicks(8))
             {
                 double sy = View.YToScreen(y);
-                dc.DrawLine(y == 1 && Kind == ChartKind.Sensitivity ? BaselinePen : GridPen, new Point(plot.Left, sy), new Point(plot.Right, sy));
+                dc.DrawLine(GridPen, new Point(plot.Left, sy), new Point(plot.Right, sy));
                 var t = Text(FormatTick(y, yStep), 11, DimTextBrush);
                 dc.DrawText(t, new Point(plot.Left - t.Width - 6, sy - t.Height / 2));
             }
 
-            if (Kind == ChartKind.Sensitivity && 1 > View.MinY && 1 < View.MaxY)
+            if (Kind == ChartKind.Sensitivity && BaselineY > View.MinY && BaselineY < View.MaxY)
             {
-                double sy = View.YToScreen(1);
+                double sy = View.YToScreen(BaselineY);
                 dc.DrawLine(BaselinePen, new Point(plot.Left, sy), new Point(plot.Right, sy));
             }
 

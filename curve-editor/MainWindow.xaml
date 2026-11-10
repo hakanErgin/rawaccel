@@ -49,6 +49,11 @@
         <Border DockPanel.Dock="Right" Width="320" Background="White" BorderBrush="#DADDE2" BorderThickness="1,0,0,0">
             <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="14,4,14,14">
                 <StackPanel>
+                    <TextBlock Text="Profile" Style="{StaticResource SectionHeader}" />
+                    <TextBlock Text="{Binding ProfileUsageText}" Style="{StaticResource Hint}" FontSize="11.5" />
+                    <Button Content="Make default" Command="{Binding MakeDefaultCommand}" HorizontalAlignment="Left" Margin="0,6,0,0"
+                            ToolTip="Move this profile to the front: every device without its own profile then uses it" />
+
                     <TextBlock Text="Curve" Style="{StaticResource SectionHeader}" />
 
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,8" Visibility="{Binding Separate, Converter={StaticResource BoolToVisibility}}">
@@ -162,6 +167,12 @@
                         </Grid>
                     </Expander>
 
+                    <TextBlock Text="Startup" Style="{StaticResource SectionHeader}" />
+                    <CheckBox Content="Apply settings when the editor opens" IsChecked="{Binding ApplyOnStartup}" Margin="0,0,0,4"
+                              ToolTip="Send settings.json to the driver as soon as the editor starts" />
+                    <CheckBox Content="Apply settings when I sign in to Windows" IsChecked="{Binding ApplyAtSignIn}"
+                              ToolTip="The driver forgets its settings when Windows restarts. This applies settings.json at sign-in without opening the editor." />
+
                     <Expander Header="Precision controls" Margin="0,10,0,0" IsExpanded="True">
                         <TextBlock Style="{StaticResource Hint}" FontSize="11.5" Margin="0,6,0,0" LineHeight="17">
                             <Run FontWeight="SemiBold" Text="Zoom" />
@@ -196,6 +207,8 @@
                     <RadioButton Content="Velocity" Foreground="#C9CDD4" GroupName="kind" Margin="0,0,10,0" VerticalAlignment="Center" Checked="OnKindVelocity" />
                     <RadioButton Content="Gain" Foreground="#C9CDD4" GroupName="kind" Margin="0,0,18,0" VerticalAlignment="Center" Checked="OnKindGain" />
                     <CheckBox Content="Log speed axis" Foreground="#C9CDD4" IsChecked="{Binding LogX}" VerticalAlignment="Center" Margin="0,0,18,0" />
+                    <CheckBox Content="Include base sensitivity" Foreground="#C9CDD4" IsChecked="{Binding IncludeSensitivity}" VerticalAlignment="Center" Margin="0,0,18,0"
+                              ToolTip="Show sensitivity × curve (what you actually get). Untick to see the bare curve multiplier, which starts at 1." />
                     <CheckBox Content="Peak (5 s)" Foreground="#C9CDD4" IsChecked="True" VerticalAlignment="Center" Margin="0,0,18,0"
                               Checked="OnShowPeakChanged" Unchecked="OnShowPeakChanged"
                               ToolTip="Mark the fastest mouse speed of the last 5 seconds on the applied curve. It stays after you stop moving, so you can check a swipe afterwards." />

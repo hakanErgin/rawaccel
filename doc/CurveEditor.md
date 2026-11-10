@@ -4,7 +4,9 @@ The curve editor is an alternative to the Raw Accel GUI. Instead of typing coeff
 
 ![Curve editor with a capped classic curve: the cap handle was just raised, the dashed line is the last applied curve](images/curve-editor.png)
 
-Nothing reaches the driver until you press **Apply** (Ctrl+S). Apply validates the settings, writes `settings.json`, and sends them to the driver.
+When the editor opens it sends `settings.json` to the driver, so your saved settings are active straight away (turn this off under *Startup* in the side panel). After that, nothing reaches the driver until you press **Apply** (Ctrl+S). Apply validates the settings, writes `settings.json`, and sends them to the driver. It's always available, so you can also use it just to re-send the settings.
+
+The driver forgets its settings when Windows restarts. Tick *Apply settings when I sign in to Windows* to have them applied at every sign-in, without opening the editor.
 
 ## Install
 
@@ -17,6 +19,8 @@ Nothing reaches the driver until you press **Apply** (Ctrl+S). Apply validates t
 
 ## The chart
 
+- **Sensitivity axis:** shows what you actually get, the base *Sensitivity* × the curve, so with a sensitivity of 0.5 the curve starts at 0.5. Untick *Include base sensitivity* to see the bare curve multiplier, which starts at 1.
+- **Default view:** speed 0–100 and sensitivity 0–6 (more if your curve goes higher). **Home** always returns here.
 - **Solid line:** the curve you are editing.
 - **Dashed line:** the last applied settings. Compare the two while you make changes.
 - **Green dot:** your mouse as you move it, placed on the applied curve.
@@ -68,6 +72,7 @@ The status bar shows the selected handle's position, the parameters it changes, 
 
 ## Profiles and devices
 
+- **Which profile is in use:** a profile only affects the devices that use it. Every device without its own profile uses the *first* (default) profile, so a second profile does nothing until you assign it to a device under **Devices…** or click **Make default**. The *Profile* section of the side panel says which devices use the selected profile.
 - **Profiles:** every profile in `settings.json` can be edited. Use the selector at the top to switch, and **New…**, **Rename…** and **Delete** to manage them. Renaming a profile updates any devices assigned to it.
 - **Devices:** **Devices…** sets the default DPI, polling rate and disable state. For each device, tick *Override* to give it its own values and profile. Devices without a profile use the first profile.
 

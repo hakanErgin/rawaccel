@@ -253,5 +253,23 @@ namespace CurveEditor.Core.Tests
                 Assert.AreEqual(a.Sensitivity(x), b.Sensitivity(x), 0.02, $"x={x}");
             }
         }
+
+        [TestMethod]
+        public void UncapThenRestoreCapGivesSameCurve()
+        {
+            foreach (var mode in new[] { CurveMode.Classic, CurveMode.Power })
+            {
+                foreach (bool gain in new[] { true, false })
+                {
+                    var args = HandleSets.For(mode).Normalize(new CurveArgs { Mode = mode, Gain = gain, Acceleration = 0.02, Scale = 0.8, ExponentPower = 0.3, CapY = 1.7, CapMode = CapType.Output });
+                    var off = HandleSets.SetCapped(args, false, Ctx);
+                    Assert.IsFalse(HandleSets.IsCapped(off));
+
+                    var restored = off.Clone();
+                    restored.CapY = args.CapY;
+                    AssertSameCurve(args, restored, 1e-12);
+                }
+            }
+        }
     }
 }

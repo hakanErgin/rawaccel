@@ -15,6 +15,10 @@ namespace CurveEditor.Core
     {
         public const string DefaultFileName = "curve-editor.json";
 
+        /// <summary> Send settings.json to the driver when the editor opens. </summary>
+        [JsonProperty("applyOnStartup")]
+        public bool ApplyOnStartup { get; set; } = true;
+
         [JsonProperty("profiles")]
         public Dictionary<string, ProfileEntry> Profiles { get; set; } = new Dictionary<string, ProfileEntry>();
 

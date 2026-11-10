@@ -68,6 +68,22 @@ namespace CurveEditor.Core.Curves
         internal static double ScalBn(double x, int n) => x * Pow(2, n);
     }
 
+    /// <summary> A curve multiplied by a constant, e.g. the base sensitivity, for display. </summary>
+    public sealed class ScaledCurve : ICurve
+    {
+        private readonly ICurve inner;
+
+        public ScaledCurve(ICurve inner, double factor)
+        {
+            this.inner = inner;
+            Factor = factor;
+        }
+
+        public double Factor { get; }
+
+        public double Sensitivity(double x) => Factor * inner.Sensitivity(x);
+    }
+
     internal sealed class NoAccel : ICurve
     {
         public static readonly NoAccel Instance = new NoAccel();

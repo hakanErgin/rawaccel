@@ -90,6 +90,7 @@ namespace CurveEditor.ViewModels
         private bool applying;
         private string lutText = "";
         private readonly List<string> deletedNames = new List<string>();
+        private readonly Dictionary<(ProfileEditor, bool), double> capStash = new Dictionary<(ProfileEditor, bool), double>();
 
         public MainViewModel(SettingsService settings, ViewState view)
         {
@@ -107,7 +108,8 @@ namespace CurveEditor.ViewModels
                 new ModeOption(CurveMode.NoAccel, "No acceleration", "Constant sensitivity"),
             };
 
-            ApplyCommand = new RelayCommand(async () => await ApplyAsync(), () => IsDirty && !applying);
+            ApplyCommand = new RelayCommand(async () => await ApplyAsync(), () => !applying);
+            MakeDefaultCommand = new RelayCommand(MakeDefault, () => selected != null && Profiles.IndexOf(selected) > 0);
             RevertCommand = new RelayCommand(Revert, () => selected != null && selected.IsDirty);
             UndoCommand = new RelayCommand(Undo, () => selected?.History.CanUndo == true);
             RedoCommand = new RelayCommand(Redo, () => selected?.History.CanRedo == true);
@@ -139,6 +141,7 @@ namespace CurveEditor.ViewModels
         public ICommand ResetViewCommand { get; }
         public ICommand ConvertToCustomCommand { get; }
         public ICommand DeleteProfileCommand { get; }
+        public ICommand MakeDefaultCommand { get; }
 
         public ObservableCollection<ParameterField> Parameters { get; } = new ObservableCollection<ParameterField>();
 
@@ -216,12 +219,56 @@ namespace CurveEditor.ViewModels
 
         public CurveArgs AppliedArgs => selected?.Applied == null ? null : (editingY && State.Separate ? selected.Applied.Y : selected.Applied.X);
 
-        public ICurve Curve => CurrentArgs == null ? null : CurveMath.Create(CurrentArgs);
+        /// <summary> Display multiplier: base sensitivity (and Y/X ratio for the vertical curve), or 1 for the bare curve. </summary>
+        private double ScaleOf(ProfileState s) =>
+            !includeSensitivity || s == null ? 1 : s.Sensitivity * (editingY && s.Separate ? s.YXRatio : 1);
 
-        public ICurve Ghost => AppliedArgs == null ? null : CurveMath.Create(AppliedArgs);
+        public double CurrentScale => ScaleOf(State);
 
-        public IReadOnlyList<Handle> Handles =>
-            CurrentArgs == null ? Array.Empty<Handle>() : HandleSets.For(CurrentArgs.Mode).GetHandles(CurrentArgs, Context);
+        private double AppliedScale => ScaleOf(selected?.Applied);
+
+        /// <summary> Where the curve starts on the chart (the base sensitivity). </summary>
+        public double BaselineY => CurrentScale;
+
+        public ICurve Curve => CurrentArgs == null ? null : new ScaledCurve(CurveMath.Create(CurrentArgs), CurrentScale);
+
+        public ICurve Ghost => AppliedArgs == null ? null : new ScaledCurve(CurveMath.Create(AppliedArgs), AppliedScale);
+
+        /// <summary> Applied curve without the display multiplier (what the driver evaluates). </summary>
+        private ICurve RawGhost => AppliedArgs == null ? null : CurveMath.Create(AppliedArgs);
+
+        /// <summary> Handles in chart coordinates (y scaled like the curve). </summary>
+        public IReadOnlyList<Handle> Handles
+        {
+            get
+            {
+                if (CurrentArgs == null) return Array.Empty<Handle>();
+                var raw = HandleSets.For(CurrentArgs.Mode).GetHandles(CurrentArgs, Context);
+                double k = CurrentScale;
+                if (k == 1) return raw;
+                return raw.Select(h => new Handle(h.Id, h.Label, new Point2(h.Position.X, h.Position.Y * k), h.Constraint, h.Description, h.Affects.ToArray()) { Kind = h.Kind }).ToList();
+            }
+        }
+
+        private bool includeSensitivity = true;
+
+        /// <summary> Show sensitivity × curve (what you feel) instead of the bare curve multiplier. </summary>
+        public bool IncludeSensitivity
+        {
+            get => includeSensitivity;
+            set
+            {
+                if (!Set(ref includeSensitivity, value)) return;
+                FitY();
+                RefreshAll();
+            }
+        }
+
+        private Point2 ToCurveSpace(Point2 chart)
+        {
+            double k = CurrentScale;
+            return k == 1 || k == 0 ? chart : new Point2(chart.X, chart.Y / k);
+        }
 
         public string SelectedHandleId
         {
@@ -352,7 +399,25 @@ namespace CurveEditor.ViewModels
             set
             {
                 if (!CapVisible || value == Capped) return;
-                var next = HandleSets.SetCapped(CurrentArgs, value, Context);
+                var key = (selected, editingY && State.Separate);
+                CurveArgs next;
+                if (!value)
+                {
+                    // remember the cap so ticking the box again restores exactly this curve
+                    capStash[key] = HandleSets.For(CurrentArgs.Mode).Normalize(CurrentArgs).CapY;
+                    next = HandleSets.SetCapped(CurrentArgs, false, Context);
+                }
+                else
+                {
+                    next = null;
+                    if (capStash.TryGetValue(key, out double capY))
+                    {
+                        next = HandleSets.For(CurrentArgs.Mode).Normalize(CurrentArgs);
+                        next.CapY = capY;
+                        if (!HandleSets.IsUsable(next)) next = null;
+                    }
+                    next = next ?? HandleSets.SetCapped(CurrentArgs, true, Context);
+                }
                 ReplaceCurve(next, pushUndo: true);
                 RebuildParameters();
                 RefreshAll();
@@ -605,7 +670,7 @@ namespace CurveEditor.ViewModels
         {
             if (CurrentArgs == null) return;
 
-            var next = HandleSets.For(CurrentArgs.Mode).Drag(CurrentArgs, id, target, Context);
+            var next = HandleSets.For(CurrentArgs.Mode).Drag(CurrentArgs, id, ToCurveSpace(target), Context);
             if (next.Equals(CurrentArgs)) return;
 
             if (isNudge)
@@ -644,7 +709,7 @@ namespace CurveEditor.ViewModels
                 return;
             }
             var next = CurrentArgs.Clone();
-            int index = LookupHandles.AddPoint(next, p);
+            int index = LookupHandles.AddPoint(next, ToCurveSpace(p));
             if (index < 0)
             {
                 Status = next.ControlPoints.Count >= LookupHandles.MaxControlPoints(next)
@@ -809,6 +874,8 @@ namespace CurveEditor.ViewModels
             OnPropertyChanged(nameof(PointCountText));
             OnPropertyChanged(nameof(IsDirty));
             OnPropertyChanged(nameof(DirtyText));
+            OnPropertyChanged(nameof(ProfileUsageText));
+            OnPropertyChanged(nameof(BaselineY));
             UpdateSelectionText();
             CommandManager.InvalidateRequerySuggested();
             Raise();
@@ -858,26 +925,6 @@ namespace CurveEditor.ViewModels
         #region View
 
         /// <summary> Default speed range: enough to show every handle and where the curve settles. </summary>
-        private double DefaultMaxX()
-        {
-            var a = CurrentArgs;
-            if (a == null) return 60;
-
-            var positions = HandleSets.For(a.Mode).GetHandles(a, HandleContext.Default)
-                .Where(h => h.Id != HandleIds.Point && h.Id != HandleIds.Bend && h.Kind != HandleKind.Level)
-                .Select(h => h.Position.X)
-                .Where(HandleSets.IsFinitePositive)
-                .ToList();
-
-            double max = positions.Count > 0 ? positions.Max() * (a.Mode == CurveMode.Lookup ? 1.15 : 2) : 60;
-            return Math.Max(10, Math.Min(max, 5000));
-        }
-
-        /// <summary>
-        /// Sets the speed range so every handle with a fixed position is inside the view, with a
-        /// little room on both sides. Handles that follow the view (the uncapped accel/scale point
-        /// and level lines) are always in view and don't count.
-        /// </summary>
         private IEnumerable<double> FixedHandleXs()
         {
             var a = CurrentArgs;
@@ -919,12 +966,36 @@ namespace CurveEditor.ViewModels
             RecomputeContext();
         }
 
-                public void ResetView()
+                public const double DefaultMaxSpeed = 100;
+        public const double DefaultMaxSensitivity = 6;
+
+        /// <summary>
+        /// Home: speed 0–100 and sensitivity 0–6 (or up to the curve's highest value if that's more),
+        /// a fixed frame so the view looks the same every time. Other chart kinds fit their values.
+        /// </summary>
+        public void ResetView()
         {
-            double maxX = DefaultMaxX();
-            view.SetWindow(view.LogX ? maxX / 1000 : -0.04 * maxX, maxX, 0.5, 2);
+            double maxX = DefaultMaxSpeed;
+            view.SetWindow(view.LogX ? 0.1 : -0.04 * maxX, maxX, view.MinY, view.MaxY);
             RecomputeContext();
-            FitY();
+
+            if (chartKind != ChartKind.Sensitivity || Curve == null)
+            {
+                FitY();
+                return;
+            }
+
+            double top = DefaultMaxSensitivity;
+            var curve = Curve;
+            for (int i = 0; i <= 200; i++)
+            {
+                double x = view.ScreenToX(view.Left + view.Width * i / 200);
+                if (x <= 0) continue;
+                double y = curve.Sensitivity(x);
+                if (HandleSets.Finite(y)) top = Math.Max(top, y * 1.1);
+            }
+            view.SetWindow(view.MinX, view.MaxX, 0, top);
+            Raise();
         }
 
         /// <summary> F / Fit: frame every handle horizontally, then fit the values vertically. </summary>
@@ -981,7 +1052,7 @@ namespace CurveEditor.ViewModels
             if (factor <= 0 || counts == 0) return null;
 
             double outSpeed = counts / timeMs / factor;
-            var ghost = Ghost;
+            var ghost = RawGhost;
             if (ghost == null) return null;
 
             double v = Solver.Bisect(x => ghost.Velocity(x), outSpeed, 1e-4, 1e5, logScale: true, clamp: false);
@@ -1071,6 +1142,84 @@ namespace CurveEditor.ViewModels
                 string candidate = $"{baseName} {i}";
                 if (Profiles.All(p => p.Name != candidate)) return candidate;
             }
+        }
+
+        /// <summary> Which devices this profile affects (a profile does nothing until a device uses it). </summary>
+        public string ProfileUsageText
+        {
+            get
+            {
+                if (selected == null || Config?.devices == null) return "";
+                var names = new HashSet<string>(Profiles.Select(p => p.Name));
+                string Dev(DeviceSettings d) => string.IsNullOrEmpty(d.name) ? d.id : d.name;
+
+                var own = Config.devices.Where(d => d.profile == selected.Name).Select(Dev).ToList();
+                if (Profiles.IndexOf(selected) == 0)
+                {
+                    string extra = own.Count > 0 ? " Also assigned to: " + string.Join(", ", own) + "." : "";
+                    return "Default profile: every device without its own profile uses it." + extra;
+                }
+                if (own.Count == 0)
+                {
+                    return "No device uses this profile, so changes here have no effect yet. Assign it to your mouse under Devices…, or click Make default.";
+                }
+                return "Used by: " + string.Join(", ", own) + ".";
+            }
+        }
+
+        /// <summary> Moves the selected profile to the front, where every unassigned device picks it up. </summary>
+        private void MakeDefault()
+        {
+            int index = Profiles.IndexOf(selected);
+            if (index <= 0) return;
+            var editor = selected;
+
+            int ci = Config.profiles.IndexOf(editor.Profile);
+            var accel = Config.accels[ci];
+            Config.profiles.RemoveAt(ci);
+            Config.accels.RemoveAt(ci);
+            Config.profiles.Insert(0, editor.Profile);
+            Config.accels.Insert(0, accel);
+
+            Profiles.Move(index, 0);
+            devicesDirty = true;
+            RefreshAll();
+            Status = $"\"{editor.Name}\" is now the default profile. Press Apply to use it.";
+        }
+
+        public bool ApplyOnStartup
+        {
+            get => settings.Sidecar.ApplyOnStartup;
+            set
+            {
+                if (settings.Sidecar.ApplyOnStartup == value) return;
+                settings.Sidecar.ApplyOnStartup = value;
+                settings.SaveSidecar();
+                OnPropertyChanged();
+            }
+        }
+
+        public bool ApplyAtSignIn
+        {
+            get => StartupRegistration.IsEnabled;
+            set
+            {
+                string error = StartupRegistration.SetEnabled(value);
+                Status = error == null
+                    ? (value ? "settings.json will be applied each time you sign in to Windows." : "No longer applying settings at Windows sign-in.")
+                    : "Couldn't change the sign-in setting: " + error;
+                OnPropertyChanged();
+            }
+        }
+
+        /// <summary> Startup: send the loaded settings.json to the driver so it is active without pressing Apply. </summary>
+        public async Task ActivateOnStartupAsync()
+        {
+            if (!settings.Sidecar.ApplyOnStartup || !settings.LoadedFromFile) return;
+            string error = await settings.ActivateAsync();
+            Status = error == null
+                ? $"Applied {SettingsService.SettingsFileName} to the driver on startup."
+                : "Couldn't apply settings on startup: " + error;
         }
 
         public void DevicesChanged()

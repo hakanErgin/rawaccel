@@ -15,6 +15,14 @@ namespace CurveEditor
         {
             base.OnStartup(e);
 
+            // --apply: send settings.json to the driver and exit (used at Windows sign-in)
+            if (e.Args.Length == 1 && e.Args[0] == "--apply")
+            {
+                headless = true;
+                ApplyAndExit();
+                return;
+            }
+
             mutex = new Mutex(true, "RawAccelCurveEditor", out bool first);
             if (!first)
             {
@@ -56,6 +64,23 @@ namespace CurveEditor
             var window = new MainWindow(screenshot);
             MainWindow = window;
             window.Show();
+        }
+
+        private async void ApplyAndExit()
+        {
+            int code = 1;
+            try
+            {
+                VersionHelper.ValidOrThrow();
+                var settings = new Services.SettingsService(AppDomain.CurrentDomain.BaseDirectory);
+                settings.Load();
+                if (settings.LoadedFromFile && await settings.ActivateAsync() == null) code = 0;
+            }
+            catch (Exception ex)
+            {
+                File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "curve-editor-error.log"), ex.ToString());
+            }
+            Shutdown(code);
         }
 
         protected override void OnExit(ExitEventArgs e)

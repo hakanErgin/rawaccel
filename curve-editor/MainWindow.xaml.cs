@@ -66,13 +66,13 @@ namespace CurveEditor
             Closing += OnClosing;
         }
 
-        private void OnLoaded(object sender, RoutedEventArgs e)
+        private async void OnLoaded(object sender, RoutedEventArgs e)
         {
             if (screenshotPath != null)
             {
                 vm.LoadDemo();
                 Chart.PeakSpeed = 38; // sample swipe so the screenshot shows the peak marker
-                Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(SaveScreenshot));
+                _ = Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(SaveScreenshot));
                 return;
             }
 
@@ -89,6 +89,7 @@ namespace CurveEditor
 
             vm.ResetView();
             Chart.Focus();
+            await vm.ActivateOnStartupAsync();
         }
 
         private void SaveScreenshot()
@@ -139,6 +140,8 @@ namespace CurveEditor
             Chart.Handles = vm.Handles;
             Chart.SelectedHandleId = vm.SelectedHandleId;
             Chart.Kind = vm.ChartKind;
+            Chart.BaselineY = vm.BaselineY;
+            Chart.IncludesSensitivity = vm.IncludeSensitivity;
             Chart.InvalidateVisual();
         }
 

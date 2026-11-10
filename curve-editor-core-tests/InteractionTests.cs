@@ -267,5 +267,27 @@ namespace CurveEditor.Core.Tests
             p.Add(31, 8);
             Assert.AreEqual(8, p.Peak, "new movement starts a fresh window");
         }
+
+        [TestMethod]
+        public void FitYFollowsCurveBelowOne()
+        {
+            var v = MakeView(false);
+            v.FitY(x => 0.4 + x / 1000);
+            Assert.IsTrue(v.MaxY < 0.6, "a low-sensitivity curve is not stretched up to 1");
+            Assert.IsTrue(v.MinY < 0.4 && v.MinY > 0.3);
+        }
+
+        [TestMethod]
+        public void ScaledCurveMultipliesSensitivity()
+        {
+            var classic = new CurveArgs { Mode = CurveMode.Classic, Acceleration = 0.02, CapY = 1.5, CapMode = CapType.Output };
+            var raw = Curves.CurveMath.Create(classic);
+            var scaled = new Curves.ScaledCurve(raw, 0.5);
+            foreach (double x in new[] { 0.5, 10, 80 })
+            {
+                Assert.AreEqual(raw.Sensitivity(x) * 0.5, scaled.Sensitivity(x), 1e-12);
+            }
+            Assert.AreEqual(0.5, scaled.Sensitivity(0.01), 1e-3, "starts at the base sensitivity, not at 1");
+        }
     }
 }

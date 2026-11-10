@@ -80,6 +80,35 @@ namespace CurveEditor.Services
             Sidecar = new CustomCurveSidecar();
         }
 
+        /// <summary> True when settings.json existed and was loaded without problems. </summary>
+        public bool LoadedFromFile => File.Exists(SettingsPath) && LoadWarning == null;
+
+        /// <summary> Sends the loaded config to the driver without rewriting any files. Returns null on success. </summary>
+        public async Task<string> ActivateAsync()
+        {
+            var cfg = Config;
+            try
+            {
+                await Task.Run(() => cfg.Activate());
+                return null;
+            }
+            catch (InteropException e)
+            {
+                return e.Message;
+            }
+        }
+
+        public void SaveSidecar()
+        {
+            try
+            {
+                Sidecar.Save(SidecarPath);
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+            {
+            }
+        }
+
         /// <summary> Validates, writes settings.json and the sidecar, then sends the config to the driver. </summary>
         public async Task<string> ApplyAsync()
         {

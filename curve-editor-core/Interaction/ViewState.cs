@@ -148,11 +148,11 @@ namespace CurveEditor.Core.Interaction
 
         /// <summary>
         /// Fits y to the curve over the current x window (plus extra points such as handles),
-        /// with padding. Keeps y = 1 in view so the baseline is always visible.
+        /// with padding.
         /// </summary>
         public void FitY(Func<double, double> curve, IEnumerable<Point2> extra = null, int samples = 400)
         {
-            double lo = 1, hi = 1;
+            double lo = double.MaxValue, hi = double.MinValue;
             for (int i = 0; i <= samples; i++)
             {
                 double x = ScreenToX(Left + Width * i / samples);
@@ -173,7 +173,8 @@ namespace CurveEditor.Core.Interaction
                 }
             }
 
-            double span = Math.Max(hi - lo, 0.05);
+            if (lo > hi) return;
+            double span = Math.Max(hi - lo, Math.Max(Math.Abs(hi), 1) * 0.05);
             SetWindow(MinX, MaxX, lo - span * 0.12, hi + span * 0.12);
         }
 
