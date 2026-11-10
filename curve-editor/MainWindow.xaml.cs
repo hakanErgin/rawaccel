@@ -131,7 +131,9 @@ namespace CurveEditor
 
         private void OnRawMouse(IntPtr device, double dx, double dy, double timeMs)
         {
-            var live = vm.PlaceLiveInput(dx, dy, timeMs);
+            // where output speed is ambiguous, stay near the last movement (if it was recent)
+            double? previous = lastLive is LiveSample l && (DateTime.UtcNow - Chart.LiveTime).TotalSeconds < 0.5 ? l.Speed : (double?)null;
+            var live = vm.PlaceLiveInput(dx, dy, timeMs, previous);
             if (live == null) return;
             lastLive = live;
             Chart.LiveSpeed = live.Value.Speed;

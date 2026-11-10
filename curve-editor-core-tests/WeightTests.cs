@@ -185,6 +185,26 @@ namespace CurveEditor.Core.Tests
         }
 
         [TestMethod]
+        public void FallingOutputSpeedIsStillPlaced()
+        {
+            // natural legacy, limit 0.5, decay 0.1, range 2: sensitivity 2·exp(−0.1x) − 1 at weight 2
+            // gives output speed falling again at high speed (review repro: 10 counts in 0.868589 ms → 1 count)
+            var natural = new Fn(x => 1 - 0.5 * (1 - Math.Exp(-0.1 * x)));
+            var p = new LiveProfile { RangeX = 2, RangeY = 2 };
+            var w = new WeightedCurve(natural, new AxisWeights(1, 2));
+            double time = 0.868589, speed = 10 / time;
+            double outCounts = w.Velocity(speed) * time;
+
+            var slowest = LiveInput.Solve(p, natural, false, outCounts, 0, time);
+            Assert.IsNotNull(slowest);
+            Assert.AreEqual(Math.Abs(w.Velocity(speed)), Math.Abs(w.Velocity(slowest.Value.Speed)), 1e-6);
+
+            // near the previous report, the matching root on that side is chosen
+            var near = LiveInput.Solve(p, natural, false, outCounts, 0, time, near: speed * 1.05);
+            Assert.AreEqual(speed, near.Value.Speed, 1e-4 * speed);
+        }
+
+        [TestMethod]
         public void PeakTrackerKeepsTheTagOfThePeak()
         {
             var t = new PeakTracker(5);

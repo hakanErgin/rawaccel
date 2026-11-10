@@ -1231,7 +1231,7 @@ namespace CurveEditor.ViewModels
         /// and its direction's weights. Returns null if it can't be placed. Draw it with
         /// <see cref="LiveCurve"/>, which follows display changes made afterwards.
         /// </summary>
-        public LiveSample? PlaceLiveInput(double dx, double dy, double timeMs)
+        public LiveSample? PlaceLiveInput(double dx, double dy, double timeMs, double? previousSpeed = null)
         {
             var applied = selected?.Applied;
             var ghost = RawGhost;
@@ -1250,7 +1250,7 @@ namespace CurveEditor.ViewModels
                 RangeY = applied.RangeY,
                 LpNorm = applied.LpNorm,
             };
-            return LiveInput.Solve(profile, ghost, editingY, dx, dy, timeMs);
+            return LiveInput.Solve(profile, ghost, editingY, dx, dy, timeMs, previousSpeed);
         }
 
         /// <summary>

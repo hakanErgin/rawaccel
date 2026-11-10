@@ -136,8 +136,11 @@ namespace CurveEditor.Core.Curves
         /// output speed = input speed × weighted curve × sensitivity. <paramref name="axisCurve"/>
         /// is the applied curve (the Y one when <paramref name="yAxis"/> and the profile is by
         /// component). Returns null if the report can't be placed. Speed cap and smoothing are ignored.
+        /// When output speed falls again at higher input speed (strong deceleration, or a range
+        /// weight above 1), several input speeds give the same output: the one nearest
+        /// <paramref name="near"/> (e.g. the previous report's speed) is used, else the slowest.
         /// </summary>
-        public static LiveSample? Solve(LiveProfile p, ICurve axisCurve, bool yAxis, double dx, double dy, double timeMs)
+        public static LiveSample? Solve(LiveProfile p, ICurve axisCurve, bool yAxis, double dx, double dy, double timeMs, double? near = null)
         {
             if (p == null || axisCurve == null || !(timeMs > 0)) return null;
 
@@ -176,9 +179,48 @@ namespace CurveEditor.Core.Curves
             var curve = new WeightedCurve(axisCurve, weights);
             // a range weight above 1 can push the multiplier below 0 (the driver then flips the
             // output), so match the output's size, not its sign
-            double v = Solver.Bisect(x => Math.Abs(curve.Velocity(x)), outSpeed, 1e-4, 1e5, logScale: true, clamp: false);
+            double v = SolveSpeed(x => Math.Abs(curve.Velocity(x)), outSpeed, near);
             return double.IsNaN(v) ? (LiveSample?)null : new LiveSample(v, weights, vertical);
         }
+
+        private const double MinSpeed = 1e-4, MaxSpeed = 1e5;
+        private const int ScanSteps = 160;
+
+        /// <summary>
+        /// Input speed in [MinSpeed, MaxSpeed] whose output speed is <paramref name="target"/>. Scans a
+        /// log grid for every crossing (output speed need not be monotonic), bisects each, and picks
+        /// the root nearest <paramref name="near"/> in log terms, or the smallest. NaN if none.
+        /// </summary>
+        internal static double SolveSpeed(Func<double, double> velocity, double target, double? near)
+        {
+            double logLo = Math.Log(MinSpeed), step = (Math.Log(MaxSpeed) - logLo) / ScanSteps;
+            double best = double.NaN, bestDistance = double.PositiveInfinity;
+            double prevX = MinSpeed, prevF = velocity(prevX);
+            for (int i = 1; i <= ScanSteps; i++)
+            {
+                double x = Math.Exp(logLo + step * i);
+                double f = velocity(x);
+                if (Finite(prevF) && Finite(f) && (prevF - target) * (f - target) <= 0)
+                {
+                    double root = Solver.Bisect(velocity, target, prevX, x, logScale: true, clamp: true);
+                    if (Finite(root))
+                    {
+                        if (near == null || !(near > 0)) return root;
+                        double d = Math.Abs(Math.Log(root / near.Value));
+                        if (d < bestDistance)
+                        {
+                            best = root;
+                            bestDistance = d;
+                        }
+                    }
+                }
+                prevX = x;
+                prevF = f;
+            }
+            return best;
+        }
+
+        private static bool Finite(double v) => !double.IsNaN(v) && !double.IsInfinity(v);
 
         /// <summary> rawaccel.hpp calc_speed_whole: max for p ≥ 16 (or ≤ 0), Euclidean for 2, Lp otherwise. </summary>
         public static double Distance(double ax, double ay, double p) =>
