@@ -23,7 +23,8 @@ The driver forgets its settings when Windows restarts. Tick *Apply settings when
 - **Default view:** speed 0–100 and sensitivity 0–6 (more if your curve goes higher). **Home** always returns here.
 - **Solid line:** the curve you are editing.
 - **Dashed line:** the last applied settings. Compare the two while you make changes.
-- **Green dot:** your mouse as you move it, placed on the applied curve.
+- **Domain and range weights:** the lines include them, the way the driver applies them, so the chart shows horizontal movement (vertical when editing the Y curve). With one curve for both axes and different X and Y weights, a dotted line labelled *vertical* shows what vertical movement gets. Handles stay on the drawn curve; with a range weight of 0 the curve is flat, so handles only move sideways.
+- **Green dot:** your mouse as you move it, placed on the applied curve for the direction you're moving (diagonal movement with different X and Y weights falls between the horizontal and vertical lines).
 - **Green dashed line (peak):** the fastest speed of your last 5 seconds of movement, with the sensitivity you got there. It stays put after you stop, so you can do a swipe and read it afterwards. Turn it off with *Peak (5 s)* above the chart.
 - **Speed axis:** counts/ms at 1000 DPI, which is the same unit the driver and the old GUI use. If a device has a DPI set under **Devices…**, speed is normalized to inches per second.
 - **Views:** switch between *Sensitivity*, *Velocity* and *Gain* at the top. Handles are shown in the Sensitivity view.

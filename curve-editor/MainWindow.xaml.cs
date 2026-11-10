@@ -8,6 +8,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using CurveEditor.Controls;
+using CurveEditor.Core.Curves;
 using CurveEditor.Core.Interaction;
 using CurveEditor.Services;
 using CurveEditor.ViewModels;
@@ -59,6 +60,7 @@ namespace CurveEditor
             {
                 peak.Update(clock.Elapsed.TotalSeconds);
                 Chart.PeakSpeed = peak.Peak;
+                Chart.PeakCurve = peak.PeakTag as ICurve;
                 Chart.InvalidateVisual();
                 // run until the 5 s peak window has settled
                 if ((DateTime.UtcNow - Chart.LiveTime).TotalSeconds > 5.5) liveTimer.Stop();
@@ -129,11 +131,13 @@ namespace CurveEditor
 
         private void OnRawMouse(IntPtr device, double dx, double dy, double timeMs)
         {
-            var speed = vm.LiveInputSpeed(dx, dy, timeMs);
-            if (speed == null) return;
-            Chart.LiveSpeed = speed;
-            peak.Add(clock.Elapsed.TotalSeconds, speed.Value);
+            var live = vm.PlaceLiveInput(dx, dy, timeMs);
+            if (live == null) return;
+            Chart.LiveSpeed = live.Value.Speed;
+            Chart.LiveCurve = live.Value.Curve;
+            peak.Add(clock.Elapsed.TotalSeconds, live.Value.Speed, live.Value.Curve);
             Chart.PeakSpeed = peak.Peak;
+            Chart.PeakCurve = peak.PeakTag as ICurve;
             Chart.LiveTime = DateTime.UtcNow;
             if (!liveTimer.IsEnabled) liveTimer.Start();
         }
@@ -142,6 +146,7 @@ namespace CurveEditor
         {
             Chart.Curve = vm.Curve;
             Chart.Ghost = vm.Ghost;
+            Chart.VerticalCurve = vm.VerticalCurve;
             Chart.Handles = vm.Handles;
             Chart.SelectedHandleId = vm.SelectedHandleId;
             Chart.Kind = vm.ChartKind;
