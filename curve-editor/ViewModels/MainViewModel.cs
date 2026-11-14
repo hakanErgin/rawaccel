@@ -117,6 +117,9 @@ namespace CurveEditor.ViewModels
             ResetViewCommand = new RelayCommand(ResetView);
             ConvertToCustomCommand = new RelayCommand(ConvertToCustom, () => CurrentArgs != null && CurrentArgs.Mode != CurveMode.Lookup);
             DeleteProfileCommand = new RelayCommand(DeleteProfile, () => Profiles.Count > 1);
+            AutoMaxYCommand = new RelayCommand(AutoMaxY, () => SavedMaxY(chartKind) != null);
+
+            view.Changed += (s, e) => OnPropertyChanged(nameof(ViewRangeText));
         }
 
         public event EventHandler CurveChanged;
@@ -141,6 +144,7 @@ namespace CurveEditor.ViewModels
         public ICommand ResetViewCommand { get; }
         public ICommand ConvertToCustomCommand { get; }
         public ICommand DeleteProfileCommand { get; }
+        public ICommand AutoMaxYCommand { get; }
 
         public ObservableCollection<ParameterField> Parameters { get; } = new ObservableCollection<ParameterField>();
 
@@ -149,6 +153,7 @@ namespace CurveEditor.ViewModels
         public void Load()
         {
             settings.Load();
+            autoTop = null;
             LoadProfiles();
             Status = settings.LoadWarning ?? $"Loaded {settings.SettingsPath}";
         }
@@ -323,7 +328,7 @@ namespace CurveEditor.ViewModels
             set
             {
                 if (!Set(ref includeSensitivity, value)) return;
-                FitY();
+                SavedOrFitY();
                 RefreshAll();
             }
         }
@@ -397,7 +402,10 @@ namespace CurveEditor.ViewModels
             {
                 if (!Set(ref chartKind, value)) return;
                 Raise();
-                FitY();
+                autoTop = null;
+                SavedOrFitY();
+                if (SavedMaxY(chartKind) == null) autoTop = view.MaxY;
+                NotifyHomeFrame();
             }
         }
 
@@ -1159,23 +1167,117 @@ namespace CurveEditor.ViewModels
             RecomputeContext();
         }
 
-                public const double DefaultMaxSpeed = 100;
+        public const double DefaultMaxSpeed = 100;
         public const double DefaultMaxSensitivity = 6;
 
+        /// <summary> Top of the value axis the last Home fitted (shown in the field when none is saved). </summary>
+        private double? autoTop;
+
+        private CustomCurveSidecar.ViewEntry ViewPrefs => settings.Sidecar.View;
+
+        private static string KindKey(ChartKind kind) =>
+            kind == ChartKind.Velocity ? "velocity" : kind == ChartKind.Gain ? "gain" : "sensitivity";
+
+        /// <summary> The value-axis top saved for a chart, or null to fit the curve. </summary>
+        private double? SavedMaxY(ChartKind kind)
+        {
+            var saved = ViewPrefs?.MaxY;
+            return saved != null && saved.TryGetValue(KindKey(kind), out double v) ? CustomCurveSidecar.ViewEntry.Valid(v) : null;
+        }
+
+        private CustomCurveSidecar.ViewEntry EnsureViewPrefs()
+        {
+            if (settings.Sidecar.View == null) settings.Sidecar.View = new CustomCurveSidecar.ViewEntry();
+            if (settings.Sidecar.View.MaxY == null) settings.Sidecar.View.MaxY = new Dictionary<string, double>();
+            return settings.Sidecar.View;
+        }
+
+        /// <summary> Right edge of the speed axis at Home (saved, every chart). </summary>
+        public double HomeMaxSpeed
+        {
+            get => CustomCurveSidecar.ViewEntry.Valid(ViewPrefs?.MaxSpeed) ?? DefaultMaxSpeed;
+            set
+            {
+                if (CustomCurveSidecar.ViewEntry.Valid(value) == null) return;
+                EnsureViewPrefs().MaxSpeed = value;
+                settings.SaveSidecar();
+                ResetView();
+            }
+        }
+
+        /// <summary> Top of the value axis at Home for the chart shown: the saved value exactly, else what Home fitted. </summary>
+        public double HomeMaxY
+        {
+            get => SavedMaxY(chartKind) ?? autoTop ?? view.MaxY;
+            set
+            {
+                if (CustomCurveSidecar.ViewEntry.Valid(value) == null) return;
+                EnsureViewPrefs().MaxY[KindKey(chartKind)] = value;
+                settings.SaveSidecar();
+                ResetView();
+            }
+        }
+
+        public string HomeMaxYLabel =>
+            chartKind == ChartKind.Velocity ? "Max velocity" : chartKind == ChartKind.Gain ? "Max gain" : "Max sensitivity";
+
+        /// <summary> Forget the saved top for the chart shown: Home fits the curve again. </summary>
+        private void AutoMaxY()
+        {
+            if (ViewPrefs?.MaxY == null || !ViewPrefs.MaxY.Remove(KindKey(chartKind))) return;
+            settings.SaveSidecar();
+            ResetView();
+        }
+
+        /// <summary> What the chart shows right now (changes with zoom and pan). </summary>
+        public string ViewRangeText
+        {
+            get
+            {
+                string F(double v) => v.ToString("G3", CultureInfo.InvariantCulture);
+                string what = chartKind == ChartKind.Velocity ? "velocity" : chartKind == ChartKind.Gain ? "gain" : "sensitivity";
+                return $"Showing speed {F(Math.Max(view.MinX, 0))}–{F(view.MaxX)}, {what} {F(view.MinY)}–{F(view.MaxY)}";
+            }
+        }
+
+        private void NotifyHomeFrame()
+        {
+            OnPropertyChanged(nameof(HomeMaxSpeed));
+            OnPropertyChanged(nameof(HomeMaxY));
+            OnPropertyChanged(nameof(HomeMaxYLabel));
+            OnPropertyChanged(nameof(ViewRangeText));
+            CommandManager.InvalidateRequerySuggested();
+        }
+
         /// <summary>
-        /// Home: speed 0–100 and sensitivity 0–6 (or up to the curve's highest value if that's more),
-        /// a fixed frame so the view looks the same every time. Other chart kinds fit their values.
+        /// Home: speed up to Max speed (100 unless set) and the value axis up to the saved top for
+        /// this chart, exactly. With none saved, sensitivity shows 0–6 (or up to the curve's highest
+        /// value if that's more) and the other charts fit their values.
         /// </summary>
         public void ResetView()
         {
             handleX.Clear();
-            double maxX = DefaultMaxSpeed;
-            view.SetWindow(view.LogX ? 0.1 : -0.04 * maxX, maxX, view.MinY, view.MaxY);
+            double maxX = HomeMaxSpeed;
+            view.SetWindow(view.LogX ? Math.Min(0.1, maxX / 10) : -0.04 * maxX, maxX, view.MinY, view.MaxY);
             RecomputeContext();
+            HomeY();
+            NotifyHomeFrame();
+        }
+
+        private void HomeY()
+        {
+            autoTop = null;
+            if (SavedMaxY(chartKind) is double saved)
+            {
+                view.SetWindow(view.MinX, view.MaxX, 0, saved);
+                Raise();
+                return;
+            }
 
             if (chartKind != ChartKind.Sensitivity || Curve == null)
             {
                 FitY();
+                autoTop = view.MaxY;
                 return;
             }
 
@@ -1192,7 +1294,22 @@ namespace CurveEditor.ViewModels
                 }
             }
             view.SetWindow(view.MinX, view.MaxX, 0, top);
+            autoTop = top;
             Raise();
+        }
+
+        /// <summary> Value axis after the chart changes: the saved top for this chart, else fit the curve. </summary>
+        private void SavedOrFitY()
+        {
+            if (SavedMaxY(chartKind) is double saved)
+            {
+                view.SetWindow(view.MinX, view.MaxX, 0, saved);
+                Raise();
+            }
+            else
+            {
+                FitY();
+            }
         }
 
         /// <summary> F / Fit: frame every handle horizontally, then fit the values vertically. </summary>

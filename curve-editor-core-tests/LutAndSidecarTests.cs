@@ -177,5 +177,41 @@ namespace CurveEditor.Core.Tests
             Assert.IsFalse(copy.ApplyOnStartup);
             CollectionAssert.AreEquivalent(new[] { "a" }, original.Profiles.Keys.ToList());
         }
+
+        [TestMethod]
+        public void SidecarViewRoundTripsAndOldFilesHaveNone()
+        {
+            var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".json");
+            try
+            {
+                var s = new CustomCurveSidecar { View = new CustomCurveSidecar.ViewEntry { MaxSpeed = 40 } };
+                s.View.MaxY["velocity"] = 250;
+                s.Save(path);
+
+                var loaded = CustomCurveSidecar.Load(path);
+                Assert.AreEqual(40, loaded.View.MaxSpeed);
+                Assert.AreEqual(250, loaded.View.MaxY["velocity"]);
+                Assert.IsFalse(loaded.View.MaxY.ContainsKey("sensitivity"));
+                Assert.AreSame(s.View, s.Copy().View);
+
+                File.WriteAllText(path, "{ \"applyOnStartup\": true, \"profiles\": {} }");
+                Assert.IsNull(CustomCurveSidecar.Load(path).View);
+            }
+            finally
+            {
+                File.Delete(path);
+            }
+        }
+
+        [TestMethod]
+        public void ViewValuesMustBePositiveAndFinite()
+        {
+            Assert.AreEqual(2.5, CustomCurveSidecar.ViewEntry.Valid(2.5));
+            Assert.IsNull(CustomCurveSidecar.ViewEntry.Valid(null));
+            Assert.IsNull(CustomCurveSidecar.ViewEntry.Valid(0));
+            Assert.IsNull(CustomCurveSidecar.ViewEntry.Valid(-3));
+            Assert.IsNull(CustomCurveSidecar.ViewEntry.Valid(double.NaN));
+            Assert.IsNull(CustomCurveSidecar.ViewEntry.Valid(double.PositiveInfinity));
+        }
     }
 }

@@ -21,6 +21,7 @@ The driver forgets its settings when Windows restarts. Tick *Apply settings when
 
 - **Sensitivity axis:** shows what you actually get, the base *Sensitivity* × the curve, so with a sensitivity of 0.5 the curve starts at 0.5. Untick *Include base sensitivity* to see the bare curve multiplier, which starts at 1.
 - **Default view:** speed 0–100 and sensitivity 0–6 (more if your curve goes higher). **Home** always returns here.
+- **Your own view:** type **Max speed** and the value-axis maximum (*Max sensitivity*, *Max velocity* or *Max gain*, one per chart) in the chart toolbar and press Enter. The chart shows exactly that range, and **Home** returns to it from then on; the editor remembers it in `curve-editor.json`. **Auto** forgets the maximum for the chart shown, so Home fits the curve again. The grey text after it shows the range currently on screen as you zoom and pan.
 - **Solid line:** the curve you are editing.
 - **Dashed line:** the last applied settings. Compare the two while you make changes.
 - **Domain and range weights:** the lines include them, the way the driver applies them, so the chart shows horizontal movement (vertical when editing the Y curve). With one curve for both axes, a dotted line labelled *vertical* shows what vertical movement gets when it differs from horizontal (different X and Y weights, or a *Y/X ratio* other than 1). Handles stay on the drawn curve; with a range weight of 0 the curve is flat, so handles only move sideways.
