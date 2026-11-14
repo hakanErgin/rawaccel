@@ -75,9 +75,9 @@ The status bar shows the selected handle's position, the parameters it changes, 
 
 ## Profiles and devices
 
-- **Which profile is in use:** a profile only affects the devices that use it. Every device without its own profile uses the *first* (default) profile, so a second profile does nothing until you assign it to a device under **Devices…** or click **Make default**. The *Profile* section of the side panel says which devices use the selected profile.
+- **Which profile is in use:** the profile picked in the toolbar is the active one. Picking another profile marks a switch as unsaved; **Apply** makes it active by moving it first in `settings.json`, where every device without its own profile picks it up. A device set to a specific profile under **Devices…** keeps that profile; the *Profile* section of the side panel names such devices.
 - **Profiles:** every profile in `settings.json` can be edited. Use the selector at the top to switch, and **New…**, **Rename…** and **Delete** to manage them. Renaming a profile updates any devices assigned to it.
-- **Devices:** **Devices…** sets the default DPI, polling rate and disable state. For each device, tick *Override* to give it its own values and profile. Devices without a profile use the first profile.
+- **Devices:** **Devices…** sets the default DPI, polling rate and disable state. For each device, tick *Override* to give it its own values and profile. Devices without a profile use the active profile.
 
 ## For developers
 

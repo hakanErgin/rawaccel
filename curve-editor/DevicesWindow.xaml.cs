@@ -45,7 +45,7 @@ namespace CurveEditor
     /// <summary> Per-device settings; same rules as grapher/DeviceMenuForm.cs and SettingsManager.Submit. </summary>
     public partial class DevicesWindow : Window
     {
-        public const string FirstProfileLabel = "(first profile)";
+        public const string FirstProfileLabel = "(active profile)";
 
         private readonly DriverConfig config;
 

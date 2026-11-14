@@ -16,7 +16,7 @@
                          ToolTip="0 = measure automatically" />
             </StackPanel>
             <TextBlock Text="Connected devices" FontWeight="SemiBold" Margin="0,0,0,6" />
-            <TextBlock Text="Changing a device's values ticks Override for it. Devices without an override (or with no profile chosen) use the first profile."
+            <TextBlock Text="Changing a device's values ticks Override for it. Devices without an override (or with no profile chosen) use the active profile."
                        Foreground="#5F6670" TextWrapping="Wrap" Margin="0,0,0,8" />
         </StackPanel>
 

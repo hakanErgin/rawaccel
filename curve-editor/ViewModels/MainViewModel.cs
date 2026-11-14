@@ -110,7 +110,6 @@ namespace CurveEditor.ViewModels
             };
 
             ApplyCommand = new RelayCommand(async () => await ApplyAsync(), () => !applying);
-            MakeDefaultCommand = new RelayCommand(MakeDefault, () => selected != null && Profiles.IndexOf(selected) > 0);
             RevertCommand = new RelayCommand(Revert, () => selected?.Applied != null && selected.IsDirty);
             UndoCommand = new RelayCommand(Undo, () => selected?.History.CanUndo == true);
             RedoCommand = new RelayCommand(Redo, () => selected?.History.CanRedo == true);
@@ -142,7 +141,6 @@ namespace CurveEditor.ViewModels
         public ICommand ResetViewCommand { get; }
         public ICommand ConvertToCustomCommand { get; }
         public ICommand DeleteProfileCommand { get; }
-        public ICommand MakeDefaultCommand { get; }
 
         public ObservableCollection<ParameterField> Parameters { get; } = new ObservableCollection<ParameterField>();
 
@@ -367,9 +365,18 @@ namespace CurveEditor.ViewModels
                 view.ScreenToX(view.Left + view.Width * 0.9));
         }
 
-        public bool IsDirty => devicesDirty || Profiles.Any(p => p.IsDirty);
+        public bool IsDirty => devicesDirty || PendingSwitch || Profiles.Any(p => p.IsDirty);
 
-        public string DirtyText => IsDirty ? "● Unsaved changes — press Apply to write them to the driver" : "All changes applied";
+        /// <summary>
+        /// The selected profile is not first yet: Apply moves it there, where every device without
+        /// its own profile picks it up.
+        /// </summary>
+        private bool PendingSwitch => selected != null && Profiles.IndexOf(selected) > 0;
+
+        public string DirtyText =>
+            PendingSwitch ? $"● Unsaved changes — press Apply to switch to \"{selected.Name}\""
+            : IsDirty ? "● Unsaved changes — press Apply to write them to the driver"
+            : "All changes applied";
 
         public string Status
         {
@@ -1340,7 +1347,7 @@ namespace CurveEditor.ViewModels
             Profiles.Add(editor);
             SelectedProfile = editor;
             RefreshAll();
-            Status = $"Added profile \"{name}\". Assign it to a device under Devices…";
+            Status = $"Added profile \"{name}\". Press Apply to use it.";
         }
 
         public void RenameProfile()
@@ -1389,7 +1396,8 @@ namespace CurveEditor.ViewModels
             devicesDirty = true;
 
             Profiles.RemoveAt(index);
-            SelectedProfile = Profiles[Math.Min(index, Profiles.Count - 1)];
+            // the first profile is the active one: deleting another profile doesn't switch away from it
+            SelectedProfile = Profiles[0];
             RefreshAll();
             Status = $"Deleted profile \"{victim.Name}\" (not written until you Apply).";
         }
@@ -1403,7 +1411,7 @@ namespace CurveEditor.ViewModels
             }
         }
 
-        /// <summary> Which devices this profile affects (a profile does nothing until a device uses it). </summary>
+        /// <summary> Which devices this profile affects, now or once Apply makes it the active (first) profile. </summary>
         public string ProfileUsageText
         {
             get
@@ -1413,38 +1421,18 @@ namespace CurveEditor.ViewModels
                 string Dev(DeviceSettings d) => string.IsNullOrEmpty(d.name) ? d.id : d.name;
 
                 var own = Config.devices.Where(d => d.profile == selected.Name).Select(Dev).ToList();
-                if (Profiles.IndexOf(selected) == 0)
-                {
-                    string extra = own.Count > 0 ? " Also assigned to: " + string.Join(", ", own) + "." : "";
-                    return "Default profile: every device without its own profile uses it." + extra;
-                }
-                if (own.Count == 0)
-                {
-                    return "No device uses this profile, so changes here have no effect yet. Assign it to your mouse under Devices…, or click Make default.";
-                }
-                return "Used by: " + string.Join(", ", own) + ".";
+                // devices set to another existing profile under Devices… don't follow the active profile
+                var elsewhere = Config.devices
+                    .Where(d => !d.config.disable && !string.IsNullOrEmpty(d.profile) && d.profile != selected.Name && names.Contains(d.profile))
+                    .Select(d => $"{Dev(d)} ({d.profile})").ToList();
+
+                var text = new StringBuilder(PendingSwitch
+                    ? "Becomes the active profile when you press Apply: every device without its own profile will use it."
+                    : "Active profile: every device without its own profile uses it.");
+                if (own.Count > 0) text.Append(" Also assigned to: ").Append(string.Join(", ", own)).Append('.');
+                if (elsewhere.Count > 0) text.Append(" Set to another profile under Devices…: ").Append(string.Join(", ", elsewhere)).Append('.');
+                return text.ToString();
             }
-        }
-
-        /// <summary> Moves the selected profile to the front, where every unassigned device picks it up. </summary>
-        private void MakeDefault()
-        {
-            if (BlockedByApply()) return;
-            int index = Profiles.IndexOf(selected);
-            if (index <= 0) return;
-            var editor = selected;
-
-            int ci = Config.profiles.IndexOf(editor.Profile);
-            var accel = Config.accels[ci];
-            Config.profiles.RemoveAt(ci);
-            Config.accels.RemoveAt(ci);
-            Config.profiles.Insert(0, editor.Profile);
-            Config.accels.Insert(0, accel);
-
-            Profiles.Move(index, 0);
-            devicesDirty = true;
-            RefreshAll();
-            Status = $"\"{editor.Name}\" is now the default profile. Press Apply to use it.";
         }
 
         public bool ApplyOnStartup
@@ -1532,6 +1520,15 @@ namespace CurveEditor.ViewModels
                     return;
                 }
 
+                // the selected profile becomes the active one: first, where unassigned devices pick it up
+                var activate = selected;
+                string switched = null;
+                if (activate != null && Profiles.IndexOf(activate) > 0)
+                {
+                    MoveToFront(activate);
+                    switched = activate.Name;
+                }
+
                 // what is being written; edits made while the driver write runs stay unapplied
                 var written = Profiles.Select(e => (Editor: e, State: e.Current, Name: e.Name)).ToList();
                 var deletedNow = deletedNames.ToList();
@@ -1564,7 +1561,8 @@ namespace CurveEditor.ViewModels
                 }
                 devicesDirty = false;
                 foreach (var name in deletedNow) deletedNames.Remove(name);
-                Status = $"Applied at {DateTime.Now:T} and saved to {settings.SettingsPath}";
+                Status = (switched != null ? $"Switched to \"{switched}\". " : "")
+                    + $"Applied at {DateTime.Now:T} and saved to {settings.SettingsPath}";
             }
             catch (Exception e)
             {
@@ -1577,6 +1575,21 @@ namespace CurveEditor.ViewModels
                 RebuildParameters();
                 RefreshAll();
             }
+        }
+
+        /// <summary> Moves a profile to the front of the config and the list (written on Apply). </summary>
+        private void MoveToFront(ProfileEditor editor)
+        {
+            int ci = Config.profiles.IndexOf(editor.Profile);
+            var accel = Config.accels[ci];
+            Config.profiles.RemoveAt(ci);
+            Config.accels.RemoveAt(ci);
+            Config.profiles.Insert(0, editor.Profile);
+            Config.accels.Insert(0, accel);
+
+            Profiles.Move(Profiles.IndexOf(editor), 0);
+            // stays pending if the write fails
+            devicesDirty = true;
         }
 
         #endregion
