@@ -402,10 +402,7 @@ namespace CurveEditor.ViewModels
             {
                 if (!Set(ref chartKind, value)) return;
                 Raise();
-                autoTop = null;
                 SavedOrFitY();
-                if (SavedMaxY(chartKind) == null) autoTop = view.MaxY;
-                NotifyHomeFrame();
             }
         }
 
@@ -740,7 +737,7 @@ namespace CurveEditor.ViewModels
             // keep the speed range so the axis doesn't jump; only refit it if no handle would be visible
             RecomputeContext();
             if (!AnyFixedHandleInView()) FitX();
-            FitY();
+            SavedOrFitY();
         }
 
         private void ConvertToCustom()
@@ -1298,18 +1295,24 @@ namespace CurveEditor.ViewModels
             Raise();
         }
 
-        /// <summary> Value axis after the chart changes: the saved top for this chart, else fit the curve. </summary>
+        /// <summary>
+        /// Value axis after the chart changes: the saved top for this chart, else fit the curve
+        /// (the field then shows that automatic top).
+        /// </summary>
         private void SavedOrFitY()
         {
             if (SavedMaxY(chartKind) is double saved)
             {
                 view.SetWindow(view.MinX, view.MaxX, 0, saved);
+                autoTop = null;
                 Raise();
             }
             else
             {
                 FitY();
+                autoTop = view.MaxY;
             }
+            NotifyHomeFrame();
         }
 
         /// <summary> F / Fit: frame every handle horizontally, then fit the values vertically. </summary>

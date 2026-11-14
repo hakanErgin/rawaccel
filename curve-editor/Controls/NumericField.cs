@@ -25,6 +25,13 @@ namespace CurveEditor.Controls
         public static readonly DependencyProperty MaximumProperty = DependencyProperty.Register(
             nameof(Maximum), typeof(double), typeof(NumericField), new PropertyMetadata(double.MaxValue));
 
+        /// <summary>
+        /// Enter sends the value even when the text is unchanged: for fields where entering the
+        /// shown value means something (saving it, or showing it again).
+        /// </summary>
+        public static readonly DependencyProperty CommitUnchangedOnEnterProperty = DependencyProperty.Register(
+            nameof(CommitUnchangedOnEnter), typeof(bool), typeof(NumericField), new PropertyMetadata(false));
+
         private static readonly Brush ErrorBrush = new SolidColorBrush(Color.FromRgb(0xE5, 0x73, 0x73));
 
         public NumericField()
@@ -52,6 +59,12 @@ namespace CurveEditor.Controls
             set => SetValue(MaximumProperty, value);
         }
 
+        public bool CommitUnchangedOnEnter
+        {
+            get => (bool)GetValue(CommitUnchangedOnEnterProperty);
+            set => SetValue(CommitUnchangedOnEnterProperty, value);
+        }
+
         private string shownText;
 
         private void ShowValue()
@@ -64,10 +77,10 @@ namespace CurveEditor.Controls
         /// <summary> Commits typed text (e.g. before Ctrl+S applies). Untouched text is left alone. </summary>
         public void CommitPending() => Commit();
 
-        private void Commit()
+        private void Commit(bool unchangedToo = false)
         {
             // the box shows the value rounded to 7 digits; leaving it untouched must not round the real value
-            if (Text == shownText) return;
+            if (Text == shownText && !unchangedToo) return;
 
             if (double.TryParse(Text, NumberStyles.Float, CultureInfo.InvariantCulture, out double v) && !double.IsNaN(v) && !double.IsInfinity(v))
             {
@@ -114,7 +127,7 @@ namespace CurveEditor.Controls
             switch (e.Key)
             {
                 case Key.Enter:
-                    Commit();
+                    Commit(CommitUnchangedOnEnter);
                     SelectAll();
                     e.Handled = true;
                     break;

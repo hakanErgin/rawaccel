@@ -215,13 +215,15 @@
                     <StackPanel Orientation="Horizontal" Margin="12,0,0,0" VerticalAlignment="Center"
                                 ToolTip="The frame Reset view (Home) shows. Type a value and press Enter to show it now; it is remembered.">
                         <TextBlock Text="Max speed" Foreground="#C9CDD4" VerticalAlignment="Center" Margin="0,0,6,0" />
-                        <c:NumericField Width="64" Value="{Binding HomeMaxSpeed, UpdateSourceTrigger=Explicit}" Minimum="0.001" Margin="0,2,12,2" />
+                        <c:NumericField Width="64" Value="{Binding HomeMaxSpeed, UpdateSourceTrigger=Explicit}" CommitUnchangedOnEnter="True" Minimum="0.001" Margin="0,2,12,2" />
                         <TextBlock Text="{Binding HomeMaxYLabel}" Foreground="#C9CDD4" VerticalAlignment="Center" Margin="0,0,6,0" />
-                        <c:NumericField Width="64" Value="{Binding HomeMaxY, UpdateSourceTrigger=Explicit}" Minimum="0.000001" Margin="0,2,6,2" />
+                        <c:NumericField Width="64" Value="{Binding HomeMaxY, UpdateSourceTrigger=Explicit}" CommitUnchangedOnEnter="True" Minimum="0.000001" Margin="0,2,6,2" />
                         <Button Margin="0,2,6,2" Content="Auto" Command="{Binding AutoMaxYCommand}"
                                 ToolTip="Forget the value for this chart: Reset view fits the curve again" />
                     </StackPanel>
-                    <TextBlock Text="{Binding ViewRangeText}" Foreground="#8A9099" VerticalAlignment="Center" Margin="10,0,0,0" FontFamily="Consolas" FontSize="11.5" />
+                    <!-- fixed width: the text changes while panning and must not re-wrap the toolbar -->
+                    <TextBlock Text="{Binding ViewRangeText}" Foreground="#8A9099" VerticalAlignment="Center" Margin="10,0,0,0" FontFamily="Consolas" FontSize="11.5"
+                               Width="400" TextTrimming="CharacterEllipsis" />
                     <TextBlock Text="  ─ current   ┄ applied   ● live mouse   ┆ 5 s peak" Foreground="#8A9099" VerticalAlignment="Center" Margin="10,0,0,0" />
                 </WrapPanel>
             </Border>
