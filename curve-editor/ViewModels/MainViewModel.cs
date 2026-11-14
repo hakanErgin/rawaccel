@@ -250,9 +250,40 @@ namespace CurveEditor.ViewModels
         /// <summary> Where the curve starts on the chart (the base sensitivity). </summary>
         public double BaselineY => CurrentScale;
 
-        public ICurve Curve => CurrentArgs == null ? null : new ScaledCurve(CurveMath.Create(CurrentArgs), CurrentScale);
+        /// <summary> Domain and range weights for a direction (vertical = the Y axis). </summary>
+        private static AxisWeights WeightsOf(ProfileState s, bool vertical) =>
+            s == null ? AxisWeights.None
+            : vertical ? new AxisWeights(s.DomainY, s.RangeY) : new AxisWeights(s.DomainX, s.RangeX);
 
-        public ICurve Ghost => AppliedArgs == null ? null : new ScaledCurve(CurveMath.Create(AppliedArgs), AppliedScale);
+        /// <summary>
+        /// Curve coordinates ↔ chart for the direction being shown: horizontal, or vertical when
+        /// editing the Y curve. The chart shows what the driver applies, weights included.
+        /// </summary>
+        private ChartMapping Mapping => new ChartMapping(WeightsOf(State, editingY), CurrentScale);
+
+        public ICurve Curve => CurrentArgs == null ? null : Mapping.Apply(CurveMath.Create(CurrentArgs));
+
+        public ICurve Ghost => AppliedArgs == null ? null :
+            new ChartMapping(WeightsOf(selected.Applied, editingY), AppliedScale).Apply(CurveMath.Create(AppliedArgs));
+
+        /// <summary>
+        /// One curve for both axes, but vertical movement gets something else (other weights, or a
+        /// Y/X ratio): what it gets, since the main curve shows horizontal movement. Null otherwise.
+        /// </summary>
+        public ICurve VerticalCurve
+        {
+            get
+            {
+                if (State == null || State.Separate) return null;
+                var vertical = WeightsOf(State, true);
+                double scale = VerticalScale(State);
+                if (vertical.Equals(WeightsOf(State, false)) && scale == CurrentScale) return null;
+                return new ChartMapping(vertical, scale).Apply(CurveMath.Create(State.X));
+            }
+        }
+
+        /// <summary> Display multiplier for vertical movement with one curve for both axes (Y/X applies after the curve). </summary>
+        private double VerticalScale(ProfileState s) => !includeSensitivity || s == null ? 1 : s.Sensitivity * s.YXRatio;
 
         /// <summary> Applied curve without the display multiplier (what the driver evaluates). </summary>
         private CurveArgs rawGhostArgs;
@@ -279,9 +310,9 @@ namespace CurveEditor.ViewModels
             {
                 if (CurrentArgs == null) return Array.Empty<Handle>();
                 var raw = HandleSets.For(CurrentArgs.Mode).GetHandles(CurrentArgs, Context);
-                double k = CurrentScale;
-                if (k == 1) return raw;
-                return raw.Select(h => new Handle(h.Id, h.Label, new Point2(h.Position.X, h.Position.Y * k), h.Constraint, h.Description, h.Affects.ToArray()) { Kind = h.Kind, SlidesAlongCurve = h.SlidesAlongCurve }).ToList();
+                var map = Mapping;
+                if (map.Scale == 1 && map.Weights.IsNone) return raw;
+                return raw.Select(h => new Handle(h.Id, h.Label, map.ToChart(h.Position), h.Constraint, h.Description, h.Affects.ToArray()) { Kind = h.Kind, SlidesAlongCurve = h.SlidesAlongCurve }).ToList();
             }
         }
 
@@ -299,11 +330,8 @@ namespace CurveEditor.ViewModels
             }
         }
 
-        private Point2 ToCurveSpace(Point2 chart)
-        {
-            double k = CurrentScale;
-            return k == 1 || k == 0 ? chart : new Point2(chart.X, chart.Y / k);
-        }
+        /// <summary> Chart point → curve coordinates; Y is NaN when a zero range weight flattens the curve. </summary>
+        private Point2 ToCurveSpace(Point2 chart) => Mapping.ToCurve(chart);
 
         public string SelectedHandleId
         {
@@ -322,11 +350,14 @@ namespace CurveEditor.ViewModels
                 {
                     RecomputeContext();
                 }
-                return handleX.Count == 0 ? context : new HandleContext(context.AnchorX, context.EdgeX, handleX);
+                // the context is kept in chart speeds; handles work in the curve's own speeds
+                var map = Mapping;
+                if (map.Weights.Domain == 1) return handleX.Count == 0 ? context : new HandleContext(context.AnchorX, context.EdgeX, handleX);
+                return new HandleContext(map.XToCurve(context.AnchorX), map.XToCurve(context.EdgeX), handleX);
             }
         }
 
-        /// <summary> Speeds the user slid handles to (bend point, accel point, …), by handle id. </summary>
+        /// <summary> Speeds the user slid handles to (bend point, accel point, …), by handle id, in curve coordinates. </summary>
         private readonly Dictionary<string, double> handleX = new Dictionary<string, double>();
 
         private void RecomputeContext()
@@ -669,7 +700,7 @@ namespace CurveEditor.ViewModels
 
             if (mode == CurveMode.Lookup && next.ControlPoints.Count < 2)
             {
-                next.ControlPoints = LookupHandles.SampleCurve(prev, Math.Max(view.MaxX, 10));
+                next.ControlPoints = LookupHandles.SampleCurve(prev, Math.Max(Mapping.XToCurve(view.MaxX), 10));
                 next.SmoothLut = true;
             }
 
@@ -702,7 +733,7 @@ namespace CurveEditor.ViewModels
             var prev = CurrentArgs;
             var next = prev.Clone();
             next.Mode = CurveMode.Lookup;
-            next.ControlPoints = LookupHandles.SampleCurve(prev, Math.Max(view.MaxX, 10), 14);
+            next.ControlPoints = LookupHandles.SampleCurve(prev, Math.Max(Mapping.XToCurve(view.MaxX), 10), 14);
             next.SmoothLut = true;
             if (!ReplaceCurve(next, pushUndo: true, what: "custom curve")) return;
             selectedHandleId = null;
@@ -753,15 +784,24 @@ namespace CurveEditor.ViewModels
             if (sideways)
             {
                 // slide along the curve: horizontal movement keeps the curve, only the vertical part changes the value
-                ctx = WithChosenX(ctx, id, target.X);
+                ctx = WithChosenX(ctx, id, Mapping.XToCurve(target.X));
                 if (handle.Kind != HandleKind.Level)
                 {
-                    double onCurve = CurveMath.Sensitivity(baseArgs, target.X) * CurrentScale;
+                    double onCurve = Mapping.Apply(CurveMath.Create(baseArgs)).Sensitivity(target.X);
                     target = new Point2(target.X, onCurve + (target.Y - start.Y));
                 }
             }
 
-            var next = HandleSets.For(CurrentArgs.Mode).Drag(CurrentArgs, id, ToCurveSpace(target), ctx);
+            var curveTarget = ToCurveSpace(target);
+            if (double.IsNaN(curveTarget.Y))
+            {
+                // a zero range weight flattens the curve: only the handle's speed can change
+                var raw = HandleSets.For(CurrentArgs.Mode).GetHandles(CurrentArgs, ctx).FirstOrDefault(h => h.Id == id);
+                if (raw == null) return;
+                curveTarget = new Point2(curveTarget.X, raw.Position.Y);
+            }
+
+            var next = HandleSets.For(CurrentArgs.Mode).Drag(CurrentArgs, id, curveTarget, ctx);
 
             if (sideways)
             {
@@ -825,8 +865,14 @@ namespace CurveEditor.ViewModels
                 Status = "Points need a speed above zero.";
                 return;
             }
+            var point = ToCurveSpace(p);
+            if (double.IsNaN(point.Y))
+            {
+                Status = "The range weight is 0, so the curve has no effect here; raise it to add points.";
+                return;
+            }
             var next = CurrentArgs.Clone();
-            int index = LookupHandles.AddPoint(next, ToCurveSpace(p));
+            int index = LookupHandles.AddPoint(next, point);
             if (index < 0)
             {
                 Status = next.ControlPoints.Count >= LookupHandles.MaxControlPoints(next)
@@ -1071,7 +1117,7 @@ namespace CurveEditor.ViewModels
             if (a == null) return Enumerable.Empty<double>();
             return HandleSets.For(a.Mode).GetHandles(a, Context)
                 .Where(h => h.Id != HandleIds.Point && h.Kind != HandleKind.Level)
-                .Select(h => h.Position.X)
+                .Select(h => Mapping.XToChart(h.Position.X))
                 .Where(x => HandleSets.Finite(x) && x >= 0)
                 .ToList();
         }
@@ -1127,13 +1173,16 @@ namespace CurveEditor.ViewModels
             }
 
             double top = DefaultMaxSensitivity;
-            var curve = Curve;
-            for (int i = 0; i <= 200; i++)
+            foreach (var curve in new[] { Curve, VerticalCurve })
             {
-                double x = view.ScreenToX(view.Left + view.Width * i / 200);
-                if (x <= 0) continue;
-                double y = curve.Sensitivity(x);
-                if (HandleSets.Finite(y)) top = Math.Max(top, y * 1.1);
+                if (curve == null) continue;
+                for (int i = 0; i <= 200; i++)
+                {
+                    double x = view.ScreenToX(view.Left + view.Width * i / 200);
+                    if (x <= 0) continue;
+                    double y = curve.Sensitivity(x);
+                    if (HandleSets.Finite(y)) top = Math.Max(top, y * 1.1);
+                }
             }
             view.SetWindow(view.MinX, view.MaxX, 0, top);
             Raise();
@@ -1157,13 +1206,14 @@ namespace CurveEditor.ViewModels
                 chartKind == ChartKind.Gain ? c.Gain(x) : c.Sensitivity(x);
 
             var extra = chartKind == ChartKind.Sensitivity ? Handles.Select(h => h.Position).ToList() : new List<Point2>();
-            if (ghost != null)
+            foreach (var other in new[] { ghost, VerticalCurve })
             {
+                if (other == null) continue;
                 for (int i = 0; i <= 50; i++)
                 {
                     double x = view.ScreenToX(view.Left + view.Width * i / 50);
                     if (x <= 0) continue;
-                    extra.Add(new Point2(x, value(ghost, x)));
+                    extra.Add(new Point2(x, value(other, x)));
                 }
             }
 
@@ -1180,36 +1230,45 @@ namespace CurveEditor.ViewModels
         #region Live mouse
 
         /// <summary>
-        /// Converts a raw (already accelerated) mouse report into input speed on the applied curve,
-        /// by inverting output speed = input speed × sensitivity. Returns null if it can't be placed.
+        /// Places a raw (already accelerated) mouse report on the applied curve: its input speed
+        /// and its direction's weights. Returns null if it can't be placed. Draw it with
+        /// <see cref="LiveCurve"/>, which follows display changes made afterwards.
         /// </summary>
-        public double? LiveInputSpeed(double dx, double dy, double timeMs)
+        public LiveSample? PlaceLiveInput(double dx, double dy, double timeMs, double? previousSpeed = null)
         {
             var applied = selected?.Applied;
-            if (applied == null) return null;
-
-            // undo the driver's per-axis output multipliers (applied after the curve) before measuring speed
-            double lr = dx < 0 ? applied.LRRatio : 1;
-            double ud = dy < 0 ? applied.UDRatio : 1;
-            // the driver allows negative (flipping) sensitivity and Y/X ratios; only their size matters here
-            if (lr <= 0 || ud <= 0 || applied.YXRatio == 0 || applied.Sensitivity == 0) return null;
-            double ux = dx / lr;
-            double uy = dy / (Math.Abs(applied.YXRatio) * ud);
-
-            // same distance the driver uses (rawaccel.hpp calc_speed_whole); the curve scales both axes equally
-            double ax = Math.Abs(ux), ay = Math.Abs(uy), p = applied.LpNorm;
-            double counts = applied.Separate ? (editingY ? ay : ax)
-                : p >= 16 || p <= 0 ? Math.Max(ax, ay)
-                : p == 2 ? Math.Sqrt(ax * ax + ay * ay)
-                : Math.Pow(Math.Pow(ax, p) + Math.Pow(ay, p), 1 / p);
-            if (counts == 0) return null;
-
-            double outSpeed = counts / timeMs / Math.Abs(applied.Sensitivity);
             var ghost = RawGhost;
-            if (ghost == null) return null;
+            if (applied == null || ghost == null) return null;
 
-            double v = Solver.Bisect(x => ghost.Velocity(x), outSpeed, 1e-4, 1e5, logScale: true, clamp: false);
-            return double.IsNaN(v) ? (double?)null : v;
+            var profile = new LiveProfile
+            {
+                Separate = applied.Separate,
+                Sensitivity = applied.Sensitivity,
+                YXRatio = applied.YXRatio,
+                LRRatio = applied.LRRatio,
+                UDRatio = applied.UDRatio,
+                DomainX = applied.DomainX,
+                DomainY = applied.DomainY,
+                RangeX = applied.RangeX,
+                RangeY = applied.RangeY,
+                LpNorm = applied.LpNorm,
+            };
+            return LiveInput.Solve(profile, ghost, editingY, dx, dy, timeMs, previousSpeed);
+        }
+
+        /// <summary>
+        /// The applied curve for a placed movement's direction, in chart terms: a diagonal movement
+        /// with one curve for both axes sits between the horizontal and vertical curves (the Y/X
+        /// ratio is blended by angle, like the range weight).
+        /// </summary>
+        public ICurve LiveCurve(LiveSample sample)
+        {
+            var applied = selected?.Applied;
+            var ghost = RawGhost;
+            if (applied == null || ghost == null) return null;
+            double scale = applied.Separate ? AppliedScale
+                : AppliedScale + sample.Vertical * (VerticalScale(applied) - AppliedScale);
+            return new ChartMapping(sample.Weights, scale).Apply(ghost);
         }
 
         private IList<MultiHandleDevice> systemDevices;
