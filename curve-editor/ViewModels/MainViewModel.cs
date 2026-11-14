@@ -1502,6 +1502,10 @@ namespace CurveEditor.ViewModels
         {
             applying = true;
             CommandManager.InvalidateRequerySuggested();
+            // the selected profile becomes the active one: first, where unassigned devices pick it up
+            var activate = selected;
+            int movedFrom = -1;
+            bool succeeded = false;
             try
             {
                 foreach (var editor in Profiles)
@@ -1520,12 +1524,11 @@ namespace CurveEditor.ViewModels
                     return;
                 }
 
-                // the selected profile becomes the active one: first, where unassigned devices pick it up
-                var activate = selected;
                 string switched = null;
                 if (activate != null && Profiles.IndexOf(activate) > 0)
                 {
-                    MoveToFront(activate);
+                    movedFrom = Profiles.IndexOf(activate);
+                    MoveProfile(activate, 0);
                     switched = activate.Name;
                 }
 
@@ -1560,6 +1563,7 @@ namespace CurveEditor.ViewModels
                     w.Editor.AppliedName = w.Name;
                 }
                 devicesDirty = false;
+                succeeded = true;
                 foreach (var name in deletedNow) deletedNames.Remove(name);
                 Status = (switched != null ? $"Switched to \"{switched}\". " : "")
                     + $"Applied at {DateTime.Now:T} and saved to {settings.SettingsPath}";
@@ -1571,25 +1575,25 @@ namespace CurveEditor.ViewModels
             }
             finally
             {
+                // a failed write leaves the switch pending: the driver still runs the old first profile
+                if (!succeeded && movedFrom > 0) MoveProfile(activate, movedFrom);
                 applying = false;
                 RebuildParameters();
                 RefreshAll();
             }
         }
 
-        /// <summary> Moves a profile to the front of the config and the list (written on Apply). </summary>
-        private void MoveToFront(ProfileEditor editor)
+        /// <summary> Moves a profile to <paramref name="index"/> in the config and the list, which keep the same order. </summary>
+        private void MoveProfile(ProfileEditor editor, int index)
         {
             int ci = Config.profiles.IndexOf(editor.Profile);
             var accel = Config.accels[ci];
             Config.profiles.RemoveAt(ci);
             Config.accels.RemoveAt(ci);
-            Config.profiles.Insert(0, editor.Profile);
-            Config.accels.Insert(0, accel);
+            Config.profiles.Insert(index, editor.Profile);
+            Config.accels.Insert(index, accel);
 
-            Profiles.Move(Profiles.IndexOf(editor), 0);
-            // stays pending if the write fails
-            devicesDirty = true;
+            Profiles.Move(Profiles.IndexOf(editor), index);
         }
 
         #endregion

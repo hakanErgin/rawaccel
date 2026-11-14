@@ -45,7 +45,8 @@ namespace CurveEditor
     /// <summary> Per-device settings; same rules as grapher/DeviceMenuForm.cs and SettingsManager.Submit. </summary>
     public partial class DevicesWindow : Window
     {
-        public const string FirstProfileLabel = "(active profile)";
+        /// <summary> Choice for "no profile of its own"; never equal to a profile name. </summary>
+        private readonly string activeLabel;
 
         private readonly DriverConfig config;
 
@@ -54,7 +55,10 @@ namespace CurveEditor
             InitializeComponent();
             this.config = config;
 
-            ProfileNames = new[] { FirstProfileLabel }.Concat(profiles.Select(p => p.Name)).ToList();
+            var names = profiles.Select(p => p.Name).ToList();
+            activeLabel = "(active profile)";
+            for (int i = 2; names.Contains(activeLabel); i++) activeLabel = $"(active profile {i})";
+            ProfileNames = new[] { activeLabel }.Concat(names).ToList();
 
             DefaultDisable = config.defaultDeviceConfig.disable;
             DefaultDpi = config.defaultDeviceConfig.dpi;
@@ -100,7 +104,7 @@ namespace CurveEditor
                 Disable = cfg.disable,
                 Dpi = cfg.dpi,
                 PollingRate = cfg.pollingRate,
-                Profile = string.IsNullOrEmpty(profile) || !ProfileNames.Contains(profile) ? FirstProfileLabel : profile,
+                Profile = string.IsNullOrEmpty(profile) || !ProfileNames.Contains(profile) ? activeLabel : profile,
                 Ready = true,
             };
         }
@@ -128,7 +132,7 @@ namespace CurveEditor
 
             foreach (var row in Rows)
             {
-                string profile = row.Profile == FirstProfileLabel ? "" : row.Profile;
+                string profile = row.Profile == activeLabel ? "" : row.Profile;
 
                 if (row.Override)
                 {
