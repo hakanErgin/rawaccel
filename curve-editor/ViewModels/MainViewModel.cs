@@ -110,7 +110,6 @@ namespace CurveEditor.ViewModels
             };
 
             ApplyCommand = new RelayCommand(async () => await ApplyAsync(), () => !applying);
-            MakeDefaultCommand = new RelayCommand(MakeDefault, () => selected != null && Profiles.IndexOf(selected) > 0);
             RevertCommand = new RelayCommand(Revert, () => selected?.Applied != null && selected.IsDirty);
             UndoCommand = new RelayCommand(Undo, () => selected?.History.CanUndo == true);
             RedoCommand = new RelayCommand(Redo, () => selected?.History.CanRedo == true);
@@ -118,6 +117,9 @@ namespace CurveEditor.ViewModels
             ResetViewCommand = new RelayCommand(ResetView);
             ConvertToCustomCommand = new RelayCommand(ConvertToCustom, () => CurrentArgs != null && CurrentArgs.Mode != CurveMode.Lookup);
             DeleteProfileCommand = new RelayCommand(DeleteProfile, () => Profiles.Count > 1);
+            AutoMaxYCommand = new RelayCommand(AutoMaxY, () => SavedMaxY(chartKind) != null);
+
+            view.Changed += (s, e) => OnPropertyChanged(nameof(ViewRangeText));
         }
 
         public event EventHandler CurveChanged;
@@ -142,7 +144,7 @@ namespace CurveEditor.ViewModels
         public ICommand ResetViewCommand { get; }
         public ICommand ConvertToCustomCommand { get; }
         public ICommand DeleteProfileCommand { get; }
-        public ICommand MakeDefaultCommand { get; }
+        public ICommand AutoMaxYCommand { get; }
 
         public ObservableCollection<ParameterField> Parameters { get; } = new ObservableCollection<ParameterField>();
 
@@ -151,6 +153,7 @@ namespace CurveEditor.ViewModels
         public void Load()
         {
             settings.Load();
+            autoTop = null;
             LoadProfiles();
             Status = settings.LoadWarning ?? $"Loaded {settings.SettingsPath}";
         }
@@ -325,7 +328,7 @@ namespace CurveEditor.ViewModels
             set
             {
                 if (!Set(ref includeSensitivity, value)) return;
-                FitY();
+                SavedOrFitY();
                 RefreshAll();
             }
         }
@@ -367,9 +370,18 @@ namespace CurveEditor.ViewModels
                 view.ScreenToX(view.Left + view.Width * 0.9));
         }
 
-        public bool IsDirty => devicesDirty || Profiles.Any(p => p.IsDirty);
+        public bool IsDirty => devicesDirty || PendingSwitch || Profiles.Any(p => p.IsDirty);
 
-        public string DirtyText => IsDirty ? "● Unsaved changes — press Apply to write them to the driver" : "All changes applied";
+        /// <summary>
+        /// The selected profile is not first yet: Apply moves it there, where every device without
+        /// its own profile picks it up.
+        /// </summary>
+        private bool PendingSwitch => selected != null && Profiles.IndexOf(selected) > 0;
+
+        public string DirtyText =>
+            PendingSwitch ? $"● Unsaved changes — press Apply to switch to \"{selected.Name}\""
+            : IsDirty ? "● Unsaved changes — press Apply to write them to the driver"
+            : "All changes applied";
 
         public string Status
         {
@@ -390,7 +402,7 @@ namespace CurveEditor.ViewModels
             {
                 if (!Set(ref chartKind, value)) return;
                 Raise();
-                FitY();
+                SavedOrFitY();
             }
         }
 
@@ -725,7 +737,7 @@ namespace CurveEditor.ViewModels
             // keep the speed range so the axis doesn't jump; only refit it if no handle would be visible
             RecomputeContext();
             if (!AnyFixedHandleInView()) FitX();
-            FitY();
+            SavedOrFitY();
         }
 
         private void ConvertToCustom()
@@ -1152,23 +1164,117 @@ namespace CurveEditor.ViewModels
             RecomputeContext();
         }
 
-                public const double DefaultMaxSpeed = 100;
+        public const double DefaultMaxSpeed = 100;
         public const double DefaultMaxSensitivity = 6;
 
+        /// <summary> Top of the value axis the last Home fitted (shown in the field when none is saved). </summary>
+        private double? autoTop;
+
+        private CustomCurveSidecar.ViewEntry ViewPrefs => settings.Sidecar.View;
+
+        private static string KindKey(ChartKind kind) =>
+            kind == ChartKind.Velocity ? "velocity" : kind == ChartKind.Gain ? "gain" : "sensitivity";
+
+        /// <summary> The value-axis top saved for a chart, or null to fit the curve. </summary>
+        private double? SavedMaxY(ChartKind kind)
+        {
+            var saved = ViewPrefs?.MaxY;
+            return saved != null && saved.TryGetValue(KindKey(kind), out double v) ? CustomCurveSidecar.ViewEntry.Valid(v) : null;
+        }
+
+        private CustomCurveSidecar.ViewEntry EnsureViewPrefs()
+        {
+            if (settings.Sidecar.View == null) settings.Sidecar.View = new CustomCurveSidecar.ViewEntry();
+            if (settings.Sidecar.View.MaxY == null) settings.Sidecar.View.MaxY = new Dictionary<string, double>();
+            return settings.Sidecar.View;
+        }
+
+        /// <summary> Right edge of the speed axis at Home (saved, every chart). </summary>
+        public double HomeMaxSpeed
+        {
+            get => CustomCurveSidecar.ViewEntry.Valid(ViewPrefs?.MaxSpeed) ?? DefaultMaxSpeed;
+            set
+            {
+                if (CustomCurveSidecar.ViewEntry.Valid(value) == null) return;
+                EnsureViewPrefs().MaxSpeed = value;
+                settings.SaveSidecar();
+                ResetView();
+            }
+        }
+
+        /// <summary> Top of the value axis at Home for the chart shown: the saved value exactly, else what Home fitted. </summary>
+        public double HomeMaxY
+        {
+            get => SavedMaxY(chartKind) ?? autoTop ?? view.MaxY;
+            set
+            {
+                if (CustomCurveSidecar.ViewEntry.Valid(value) == null) return;
+                EnsureViewPrefs().MaxY[KindKey(chartKind)] = value;
+                settings.SaveSidecar();
+                ResetView();
+            }
+        }
+
+        public string HomeMaxYLabel =>
+            chartKind == ChartKind.Velocity ? "Max velocity" : chartKind == ChartKind.Gain ? "Max gain" : "Max sensitivity";
+
+        /// <summary> Forget the saved top for the chart shown: Home fits the curve again. </summary>
+        private void AutoMaxY()
+        {
+            if (ViewPrefs?.MaxY == null || !ViewPrefs.MaxY.Remove(KindKey(chartKind))) return;
+            settings.SaveSidecar();
+            ResetView();
+        }
+
+        /// <summary> What the chart shows right now (changes with zoom and pan). </summary>
+        public string ViewRangeText
+        {
+            get
+            {
+                string F(double v) => v.ToString("G3", CultureInfo.InvariantCulture);
+                string what = chartKind == ChartKind.Velocity ? "velocity" : chartKind == ChartKind.Gain ? "gain" : "sensitivity";
+                return $"Showing speed {F(Math.Max(view.MinX, 0))}–{F(view.MaxX)}, {what} {F(view.MinY)}–{F(view.MaxY)}";
+            }
+        }
+
+        private void NotifyHomeFrame()
+        {
+            OnPropertyChanged(nameof(HomeMaxSpeed));
+            OnPropertyChanged(nameof(HomeMaxY));
+            OnPropertyChanged(nameof(HomeMaxYLabel));
+            OnPropertyChanged(nameof(ViewRangeText));
+            CommandManager.InvalidateRequerySuggested();
+        }
+
         /// <summary>
-        /// Home: speed 0–100 and sensitivity 0–6 (or up to the curve's highest value if that's more),
-        /// a fixed frame so the view looks the same every time. Other chart kinds fit their values.
+        /// Home: speed up to Max speed (100 unless set) and the value axis up to the saved top for
+        /// this chart, exactly. With none saved, sensitivity shows 0–6 (or up to the curve's highest
+        /// value if that's more) and the other charts fit their values.
         /// </summary>
         public void ResetView()
         {
             handleX.Clear();
-            double maxX = DefaultMaxSpeed;
-            view.SetWindow(view.LogX ? 0.1 : -0.04 * maxX, maxX, view.MinY, view.MaxY);
+            double maxX = HomeMaxSpeed;
+            view.SetWindow(view.LogX ? Math.Min(0.1, maxX / 10) : -0.04 * maxX, maxX, view.MinY, view.MaxY);
             RecomputeContext();
+            HomeY();
+            NotifyHomeFrame();
+        }
+
+        private void HomeY()
+        {
+            autoTop = null;
+            if (SavedMaxY(chartKind) is double saved)
+            {
+                view.SetWindow(view.MinX, view.MaxX, 0, saved);
+                Raise();
+                return;
+            }
 
             if (chartKind != ChartKind.Sensitivity || Curve == null)
             {
                 FitY();
+                autoTop = view.MaxY;
                 return;
             }
 
@@ -1185,7 +1291,28 @@ namespace CurveEditor.ViewModels
                 }
             }
             view.SetWindow(view.MinX, view.MaxX, 0, top);
+            autoTop = top;
             Raise();
+        }
+
+        /// <summary>
+        /// Value axis after the chart changes: the saved top for this chart, else fit the curve
+        /// (the field then shows that automatic top).
+        /// </summary>
+        private void SavedOrFitY()
+        {
+            if (SavedMaxY(chartKind) is double saved)
+            {
+                view.SetWindow(view.MinX, view.MaxX, 0, saved);
+                autoTop = null;
+                Raise();
+            }
+            else
+            {
+                FitY();
+                autoTop = view.MaxY;
+            }
+            NotifyHomeFrame();
         }
 
         /// <summary> F / Fit: frame every handle horizontally, then fit the values vertically. </summary>
@@ -1340,7 +1467,7 @@ namespace CurveEditor.ViewModels
             Profiles.Add(editor);
             SelectedProfile = editor;
             RefreshAll();
-            Status = $"Added profile \"{name}\". Assign it to a device under Devices…";
+            Status = $"Added profile \"{name}\". Press Apply to use it.";
         }
 
         public void RenameProfile()
@@ -1389,7 +1516,8 @@ namespace CurveEditor.ViewModels
             devicesDirty = true;
 
             Profiles.RemoveAt(index);
-            SelectedProfile = Profiles[Math.Min(index, Profiles.Count - 1)];
+            // the first profile is the active one: deleting another profile doesn't switch away from it
+            SelectedProfile = Profiles[0];
             RefreshAll();
             Status = $"Deleted profile \"{victim.Name}\" (not written until you Apply).";
         }
@@ -1403,7 +1531,7 @@ namespace CurveEditor.ViewModels
             }
         }
 
-        /// <summary> Which devices this profile affects (a profile does nothing until a device uses it). </summary>
+        /// <summary> Which devices this profile affects, now or once Apply makes it the active (first) profile. </summary>
         public string ProfileUsageText
         {
             get
@@ -1413,38 +1541,18 @@ namespace CurveEditor.ViewModels
                 string Dev(DeviceSettings d) => string.IsNullOrEmpty(d.name) ? d.id : d.name;
 
                 var own = Config.devices.Where(d => d.profile == selected.Name).Select(Dev).ToList();
-                if (Profiles.IndexOf(selected) == 0)
-                {
-                    string extra = own.Count > 0 ? " Also assigned to: " + string.Join(", ", own) + "." : "";
-                    return "Default profile: every device without its own profile uses it." + extra;
-                }
-                if (own.Count == 0)
-                {
-                    return "No device uses this profile, so changes here have no effect yet. Assign it to your mouse under Devices…, or click Make default.";
-                }
-                return "Used by: " + string.Join(", ", own) + ".";
+                // devices set to another existing profile under Devices… don't follow the active profile
+                var elsewhere = Config.devices
+                    .Where(d => !d.config.disable && !string.IsNullOrEmpty(d.profile) && d.profile != selected.Name && names.Contains(d.profile))
+                    .Select(d => $"{Dev(d)} ({d.profile})").ToList();
+
+                var text = new StringBuilder(PendingSwitch
+                    ? "Becomes the active profile when you press Apply: every device without its own profile will use it."
+                    : "Active profile: every device without its own profile uses it.");
+                if (own.Count > 0) text.Append(" Also assigned to: ").Append(string.Join(", ", own)).Append('.');
+                if (elsewhere.Count > 0) text.Append(" Set to another profile under Devices…: ").Append(string.Join(", ", elsewhere)).Append('.');
+                return text.ToString();
             }
-        }
-
-        /// <summary> Moves the selected profile to the front, where every unassigned device picks it up. </summary>
-        private void MakeDefault()
-        {
-            if (BlockedByApply()) return;
-            int index = Profiles.IndexOf(selected);
-            if (index <= 0) return;
-            var editor = selected;
-
-            int ci = Config.profiles.IndexOf(editor.Profile);
-            var accel = Config.accels[ci];
-            Config.profiles.RemoveAt(ci);
-            Config.accels.RemoveAt(ci);
-            Config.profiles.Insert(0, editor.Profile);
-            Config.accels.Insert(0, accel);
-
-            Profiles.Move(index, 0);
-            devicesDirty = true;
-            RefreshAll();
-            Status = $"\"{editor.Name}\" is now the default profile. Press Apply to use it.";
         }
 
         public bool ApplyOnStartup
@@ -1514,6 +1622,10 @@ namespace CurveEditor.ViewModels
         {
             applying = true;
             CommandManager.InvalidateRequerySuggested();
+            // the selected profile becomes the active one: first, where unassigned devices pick it up
+            var activate = selected;
+            int movedFrom = -1;
+            bool succeeded = false;
             try
             {
                 foreach (var editor in Profiles)
@@ -1530,6 +1642,14 @@ namespace CurveEditor.ViewModels
                     Status = invalid;
                     System.Windows.MessageBox.Show(invalid, "Raw Accel", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
                     return;
+                }
+
+                string switched = null;
+                if (activate != null && Profiles.IndexOf(activate) > 0)
+                {
+                    movedFrom = Profiles.IndexOf(activate);
+                    MoveProfile(activate, 0);
+                    switched = activate.Name;
                 }
 
                 // what is being written; edits made while the driver write runs stay unapplied
@@ -1563,8 +1683,10 @@ namespace CurveEditor.ViewModels
                     w.Editor.AppliedName = w.Name;
                 }
                 devicesDirty = false;
+                succeeded = true;
                 foreach (var name in deletedNow) deletedNames.Remove(name);
-                Status = $"Applied at {DateTime.Now:T} and saved to {settings.SettingsPath}";
+                Status = (switched != null ? $"Switched to \"{switched}\". " : "")
+                    + $"Applied at {DateTime.Now:T} and saved to {settings.SettingsPath}";
             }
             catch (Exception e)
             {
@@ -1573,10 +1695,25 @@ namespace CurveEditor.ViewModels
             }
             finally
             {
+                // a failed write leaves the switch pending: the driver still runs the old first profile
+                if (!succeeded && movedFrom > 0) MoveProfile(activate, movedFrom);
                 applying = false;
                 RebuildParameters();
                 RefreshAll();
             }
+        }
+
+        /// <summary> Moves a profile to <paramref name="index"/> in the config and the list, which keep the same order. </summary>
+        private void MoveProfile(ProfileEditor editor, int index)
+        {
+            int ci = Config.profiles.IndexOf(editor.Profile);
+            var accel = Config.accels[ci];
+            Config.profiles.RemoveAt(ci);
+            Config.accels.RemoveAt(ci);
+            Config.profiles.Insert(index, editor.Profile);
+            Config.accels.Insert(index, accel);
+
+            Profiles.Move(Profiles.IndexOf(editor), index);
         }
 
         #endregion

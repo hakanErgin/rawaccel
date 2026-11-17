@@ -132,7 +132,9 @@ namespace CurveEditor.Services
             if (errors != null) return errors;
 
             AtomicFile.WriteAllText(SettingsPath, Config.ToJSON());
+            // editor preferences may have changed while the caller built its copy
             sidecar.ApplyOnStartup = Sidecar.ApplyOnStartup;
+            sidecar.View = Sidecar.View;
             Sidecar = sidecar;
 
             try

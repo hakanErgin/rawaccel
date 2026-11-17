@@ -22,12 +22,31 @@ namespace CurveEditor.Core
         [JsonProperty("profiles")]
         public Dictionary<string, ProfileEntry> Profiles { get; set; } = new Dictionary<string, ProfileEntry>();
 
+        /// <summary> The chart's Home frame chosen by the user (editor preference, not driver data). </summary>
+        [JsonProperty("view", NullValueHandling = NullValueHandling.Ignore)]
+        public ViewEntry View { get; set; }
+
         /// <summary> A copy whose profile list can be changed without touching this one (entries are shared). </summary>
         public CustomCurveSidecar Copy() => new CustomCurveSidecar
         {
             ApplyOnStartup = ApplyOnStartup,
             Profiles = new Dictionary<string, ProfileEntry>(Profiles),
+            View = View,
         };
+
+        public sealed class ViewEntry
+        {
+            /// <summary> Right edge of the speed axis at Home; null for the default. </summary>
+            [JsonProperty("maxSpeed", NullValueHandling = NullValueHandling.Ignore)]
+            public double? MaxSpeed { get; set; }
+
+            /// <summary> Top of the value axis at Home, by chart ("sensitivity", "velocity", "gain"); missing = fit the curve. </summary>
+            [JsonProperty("maxY")]
+            public Dictionary<string, double> MaxY { get; set; } = new Dictionary<string, double>();
+
+            /// <summary> Usable positive finite value, or null. </summary>
+            public static double? Valid(double? v) => v.HasValue && v.Value > 0 && !double.IsNaN(v.Value) && !double.IsInfinity(v.Value) ? v : null;
+        }
 
         public sealed class CurveEntry
         {
