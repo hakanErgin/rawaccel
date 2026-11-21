@@ -204,6 +204,23 @@ namespace CurveEditor.Core.Tests
         }
 
         [TestMethod]
+        public void ExplicitNullsInTheSidecarAreTolerated()
+        {
+            var s = CustomCurveSidecar.Parse("{\"applyOnStartup\": false, \"profiles\": null, \"view\": {\"maxY\": null}}");
+            Assert.IsFalse(s.ApplyOnStartup);
+            Assert.AreEqual(0, s.Profiles.Count);
+            Assert.IsNotNull(s.View.MaxY);
+
+            s = CustomCurveSidecar.Parse("{\"profiles\": {\"a\": null, \"b\": {\"x\": {\"smooth\": true, \"points\": null}}}}");
+            Assert.IsFalse(s.Profiles.ContainsKey("a"));
+            var args = new CurveArgs { Mode = CurveMode.Lookup };
+            var table = LutBuilder.Build(Rising, false, true);
+            CustomCurveSidecar.Restore(args, table, s.Profiles["b"].X);
+            Assert.IsFalse(args.SmoothLut);
+            Assert.IsTrue(args.ControlPoints.Count >= 2);
+        }
+
+        [TestMethod]
         public void ViewValuesMustBePositiveAndFinite()
         {
             Assert.AreEqual(2.5, CustomCurveSidecar.ViewEntry.Valid(2.5));

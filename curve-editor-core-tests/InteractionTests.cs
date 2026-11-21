@@ -168,6 +168,64 @@ namespace CurveEditor.Core.Tests
             Assert.IsTrue(v.XTicks().All(t => t >= 0), "no negative speed labels");
         }
 
+        [DataTestMethod]
+        [DataRow(false)]
+        [DataRow(true)]
+        public void ZoomingOutStopsAtTheAxisLimits(bool logX)
+        {
+            var v = MakeView(logX);
+            v.SetWindow(logX ? 0.06 : 0, 60, 0.5, 2.5);
+            foreach (double sx in new[] { v.Left + 1, v.Left + v.Width / 2, v.Left + v.Width - 1 })
+            {
+                for (int i = 0; i < 5000; i++) v.ZoomAt(new Point2(sx, v.Top + 5), 1.25, 1.25);
+                Assert.IsTrue(v.MaxX <= ViewState.MaxViewX && v.MinX < v.MaxX, $"x {v.MinX}..{v.MaxX}");
+                Assert.IsTrue(v.MaxY <= ViewState.MaxViewY && v.MinY >= -ViewState.MaxViewY && v.MinY < v.MaxY, $"y {v.MinY}..{v.MaxY}");
+                Assert.IsFalse(double.IsNaN(v.ScreenToX(v.Left)) || double.IsInfinity(v.ScreenToX(v.Left + v.Width)));
+                Assert.IsTrue(v.XTicks().Count() < 100);
+            }
+
+            // and zooming back in still works
+            for (int i = 0; i < 40; i++) v.ZoomAt(new Point2(v.Left + v.Width / 2, v.Top + v.Height / 2), 0.8, 0.8);
+            Assert.IsTrue(v.MaxX < ViewState.MaxViewX);
+        }
+
+        [TestMethod]
+        public void LogPanStopsAtTheFloorKeepingSpan()
+        {
+            var v = MakeView(true);
+            v.SetWindow(0.01, 10, 0.5, 2.5);
+            double ratio = v.MaxX / v.MinX;
+            for (int i = 0; i < 50; i++) v.Pan(400, 0);
+            Assert.AreEqual(ViewState.MinLogX, v.MinX, 1e-12);
+            Assert.AreEqual(ratio, v.MaxX / v.MinX, ratio * 1e-9);
+        }
+
+        [DataTestMethod]
+        [DataRow(1.0)]
+        [DataRow(-1.0)]
+        public void PanningAgainstTheValueLimitKeepsADrawableWindow(double direction)
+        {
+            var v = MakeView(false);
+            v.SetWindow(0, 60, -ViewState.MaxViewY, ViewState.MaxViewY);
+            for (int i = 0; i < 3; i++) v.Pan(0, direction * v.Height);
+            Assert.IsTrue(v.MaxY > v.MinY, $"y {v.MinY}..{v.MaxY}");
+            double sy = v.YToScreen((v.MinY + v.MaxY) / 2);
+            Assert.IsFalse(double.IsNaN(sy) || double.IsInfinity(sy));
+
+            v.SetWindow(ViewState.MaxViewX, ViewState.MaxViewX, 1, 1);
+            Assert.IsTrue(v.MaxX > v.MinX && v.MaxY > v.MinY);
+        }
+
+        [TestMethod]
+        public void NaNWindowIsIgnored()
+        {
+            var v = MakeView(false);
+            v.SetWindow(0, 60, 0.5, 2.5);
+            v.SetWindow(double.NaN, 60, 0.5, 2.5);
+            Assert.AreEqual(60, v.MaxX);
+            Assert.AreEqual(0, v.MinX);
+        }
+
         [TestMethod]
         public void PanStopsAtLeftMarginKeepingSpan()
         {

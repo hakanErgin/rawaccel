@@ -259,6 +259,109 @@ namespace CurveEditor.Core.Tests
         }
 
         [TestMethod]
+        public void CapThenUncapGivesBackTheSameSettings()
+        {
+            foreach (var mode in new[] { CurveMode.Classic, CurveMode.Power })
+            {
+                foreach (bool gain in new[] { true, false })
+                {
+                    var args = HandleSets.For(mode).Normalize(new CurveArgs { Mode = mode, Gain = gain, Acceleration = 0.02, Scale = 0.8, ExponentPower = 0.3, OutputOffset = 0.5, CapX = 15, CapY = 0, CapMode = CapType.Output });
+                    var on = HandleSets.SetCapped(args, true, Ctx);
+                    Assert.IsTrue(HandleSets.IsCapped(on), $"{mode} gain={gain}");
+                    Assert.AreEqual(0, Validation.Validate(on).Count, $"{mode} gain={gain}");
+
+                    // the cap only levels off the curve: below where it starts nothing changes
+                    var capStart = Find(on, HandleIds.Cap).Position.X;
+                    var before = CurveMath.Create(args);
+                    var after = CurveMath.Create(on);
+                    foreach (double x in SampleXs.Where(x => x < capStart * 0.99))
+                    {
+                        Assert.AreEqual(before.Sensitivity(x), after.Sensitivity(x), 1e-9 * Math.Max(1, before.Sensitivity(x)), $"{mode} gain={gain} x={x}");
+                    }
+
+                    var off = HandleSets.SetCapped(on, false, Ctx);
+                    Assert.IsTrue(off.Equals(args), $"{mode} gain={gain}: unticking the cap must restore the exact settings");
+                }
+            }
+        }
+
+        [TestMethod]
+        public void NaturalWithLimitOneCanBeEditedAgain()
+        {
+            var flat = new CurveArgs { Mode = CurveMode.Natural, Limit = 1, DecayRate = 0.1, InputOffset = 2 };
+            Assert.IsTrue(HandleSets.IsUsable(flat));
+            var set = HandleSets.For(CurveMode.Natural);
+            var handles = set.GetHandles(flat, Ctx);
+            Assert.IsFalse(handles.Any(h => h.Id == HandleIds.Knee), "the decay handle would hide the offset handle");
+
+            var raised = set.Drag(flat, HandleIds.Limit, new Point2(40, 1.5), Ctx);
+            Assert.AreEqual(1.5, raised.Limit, 1e-12);
+            Assert.AreEqual(0, Validation.Validate(raised).Count);
+            Assert.IsTrue(HandleSets.Finite(raised.DecayRate) && raised.DecayRate > 0);
+
+            var moved = set.Drag(flat, HandleIds.Offset, new Point2(5, 1), Ctx);
+            Assert.AreEqual(5, moved.InputOffset, 1e-12);
+        }
+
+        [TestMethod]
+        public void SampledCurveSpeedsAlwaysRise()
+        {
+            var source = new CurveArgs { Mode = CurveMode.Classic, Acceleration = 0.02 };
+            foreach (double maxX in new[] { 0.01, 0, -1, double.NaN, double.PositiveInfinity, 50 })
+            {
+                var pts = LookupHandles.SampleCurve(source, maxX);
+                for (int i = 1; i < pts.Count; i++) Assert.IsTrue(pts[i].X > pts[i - 1].X, $"maxX={maxX}");
+                Assert.IsTrue(pts.All(p => HandleSets.Finite(p.X) && HandleSets.Finite(p.Y)), $"maxX={maxX}");
+            }
+        }
+
+        [TestMethod]
+        public void LookupValuesOutsideFloatRangeAreRejected()
+        {
+            foreach (var bad in new[] { new Point2(1e39, 2), new Point2(200, double.NaN) })
+            {
+                var args = new CurveArgs { Mode = CurveMode.Lookup, Gain = false, ControlPoints = new List<Point2> { new Point2(1, 1), new Point2(100, 1.5), bad } };
+                Assert.IsTrue(Validation.Validate(args).Count > 0, bad.ToString());
+            }
+
+            // smoothed, these overflow the spline; validation must say so rather than throw
+            var huge = new CurveArgs
+            {
+                Mode = CurveMode.Lookup,
+                Gain = false,
+                SmoothLut = true,
+                ControlPoints = new List<Point2> { new Point2(1, 1), new Point2(1.1, 1e308), new Point2(1.2, 1.5e308) },
+            };
+            Assert.IsTrue(Validation.Validate(huge).Count > 0);
+
+            // speeds that become 0 as floats: also rejected, before smoothing divides by them
+            var tiny = huge.Clone();
+            tiny.ControlPoints = new List<Point2> { new Point2(1e-310, 1), new Point2(2e-310, 2), new Point2(3e-310, 3) };
+            Assert.IsTrue(Validation.Validate(tiny).Count > 0);
+        }
+
+        [TestMethod]
+        public void LeftoverCustomPointsDontCountOutsideCustomMode()
+        {
+            var classic = new CurveArgs { Mode = CurveMode.Classic, Acceleration = 0.02 };
+            var tried = classic.Clone();
+            tried.ControlPoints = new List<Point2> { new Point2(1, 1), new Point2(10, 1.5) };
+            tried.SmoothLut = true;
+            Assert.IsFalse(tried.Equals(classic));
+            Assert.IsTrue(tried.SameAsSaved(classic));
+
+            var lookup = tried.Clone();
+            lookup.Mode = CurveMode.Lookup;
+            var otherPoints = lookup.Clone();
+            otherPoints.ControlPoints = new List<Point2> { new Point2(1, 1), new Point2(10, 1.6) };
+            Assert.IsFalse(otherPoints.SameAsSaved(lookup));
+
+            var changed = tried.Clone();
+            changed.Acceleration = 0.03;
+            Assert.IsFalse(changed.SameAsSaved(classic));
+        }
+
+        [TestMethod]
         public void UncapThenRestoreCapGivesSameCurve()
         {
             foreach (var mode in new[] { CurveMode.Classic, CurveMode.Power })

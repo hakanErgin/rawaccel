@@ -49,6 +49,17 @@ namespace CurveEditor.Core.Handles
             }
 
             double x = Math.Max(ctx.AnchorX, n.InputOffset * 1.5 + 1);
+
+            // level the curve off from x on, leaving everything below x as it was (so unticking
+            // the cap gives back exactly the previous settings): an input cap at x, stored as the
+            // equivalent output cap
+            var input = n.Clone();
+            input.CapMode = CapType.Input;
+            input.CapX = x;
+            var withCap = For(n.Mode).Normalize(input);
+            withCap.CapX = n.CapX;
+            if (withCap.CapY > 0 && IsUsable(withCap)) return withCap;
+
             double y = CurveMath.Sensitivity(n, x);
             return For(n.Mode).Drag(n, HandleIds.Cap, new Point2(x, y), ctx);
         }
@@ -553,15 +564,21 @@ namespace CurveEditor.Core.Handles
             double off = a.InputOffset;
             double xk = KneeX(a);
             double xl = ctx.X(HandleIds.Limit, Math.Max(ctx.EdgeX, xk * 1.2));
-            return new[]
+            var list = new List<Handle>
             {
                 new Handle(HandleIds.Offset, "Offset", new Point2(off, 1), HandleConstraint.XOnly,
                     "Input offset: speed where acceleration starts", nameof(CurveArgs.InputOffset)),
-                new Handle(HandleIds.Knee, "Decay", new Point2(xk, HandleSets.Eval(a, xk)), HandleConstraint.XOnly,
-                    "Decay rate: drag left to reach the limit sooner", nameof(CurveArgs.DecayRate)),
-                new Handle(HandleIds.Limit, "Limit", new Point2(xl, a.Limit), HandleConstraint.Free,
-                    "Limit: sensitivity the curve approaches", nameof(CurveArgs.Limit)) { Kind = HandleKind.Level, SlidesAlongCurve = true },
             };
+            // a limit of exactly 1 is a flat curve: the decay rate does nothing, and its handle
+            // would sit on (and hide) the offset handle
+            if (a.Limit != 1)
+            {
+                list.Add(new Handle(HandleIds.Knee, "Decay", new Point2(xk, HandleSets.Eval(a, xk)), HandleConstraint.XOnly,
+                    "Decay rate: drag left to reach the limit sooner", nameof(CurveArgs.DecayRate)));
+            }
+            list.Add(new Handle(HandleIds.Limit, "Limit", new Point2(xl, a.Limit), HandleConstraint.Free,
+                "Limit: sensitivity the curve approaches", nameof(CurveArgs.Limit)) { Kind = HandleKind.Level, SlidesAlongCurve = true });
+            return list;
         }
 
         public CurveArgs Drag(CurveArgs args, string handleId, Point2 target, HandleContext ctx)
@@ -582,6 +599,8 @@ namespace CurveEditor.Core.Handles
                 {
                     // keep the knee position (decay per unit of limit) while changing the limit
                     double width = KneeX(a) - a.InputOffset;
+                    // from a flat curve (limit 1) there is no knee yet: start one halfway to the anchor
+                    if (!(width > 0) || double.IsInfinity(width)) width = Math.Max((ctx.AnchorX - a.InputOffset) / 2, 1);
                     a.Limit = HandleSets.AwayFromOne(Math.Max(target.Y, 1e-4));
                     a.DecayRate = Math.Abs(a.Limit - 1) / width;
                     return a;
@@ -764,6 +783,8 @@ namespace CurveEditor.Core.Handles
         {
             var curve = CurveMath.Create(source);
             var pts = new List<Point2>(count);
+            // the sample speeds must rise from minX: too small (or no) range, use a default one
+            if (!(maxX >= 0.1) || double.IsInfinity(maxX)) maxX = 10;
             double minX = Math.Max(maxX / 200, 0.05);
             for (int i = 0; i < count; i++)
             {

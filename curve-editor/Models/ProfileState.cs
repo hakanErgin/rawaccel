@@ -40,7 +40,7 @@ namespace CurveEditor.Models
         }
 
         public bool SameAs(ProfileState o) =>
-            o != null && X.Equals(o.X) && Y.Equals(o.Y) && Separate == o.Separate &&
+            o != null && X.SameAsSaved(o.X) && Y.SameAsSaved(o.Y) && Separate == o.Separate &&
             Sensitivity == o.Sensitivity && YXRatio == o.YXRatio && Rotation == o.Rotation &&
             Snap == o.Snap && SpeedCap == o.SpeedCap && LRRatio == o.LRRatio && UDRatio == o.UDRatio &&
             DomainX == o.DomainX && DomainY == o.DomainY && RangeX == o.RangeX && RangeY == o.RangeY &&

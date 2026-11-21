@@ -18,6 +18,15 @@ namespace CurveEditor.Core.Interaction
         public const double LeftMargin = 0.05;
         private const double MinSpan = 1e-9;
 
+        /// <summary>
+        /// Furthest the speed axis reaches (counts/ms; real mice stay far below). Zooming out stops
+        /// here instead of running into infinity, which would break the chart.
+        /// </summary>
+        public const double MaxViewX = 1e6;
+
+        /// <summary> Furthest the value axis reaches either way. </summary>
+        public const double MaxViewY = 1e9;
+
         public double MinX { get; private set; } = 0;
         public double MaxX { get; private set; } = 60;
         public double MinY { get; private set; } = 0.8;
@@ -36,18 +45,24 @@ namespace CurveEditor.Core.Interaction
 
         public void SetWindow(double minX, double maxX, double minY, double maxY)
         {
+            // a window that isn't a number can't be drawn or recovered from: keep the current one
+            if (double.IsNaN(minX) || double.IsNaN(maxX) || double.IsNaN(minY) || double.IsNaN(maxY)) return;
+
             if (LogX)
             {
-                minX = Math.Max(minX, MinLogX);
-                maxX = Math.Max(maxX, minX * (1 + 1e-6));
+                minX = Clamp(minX, MinLogX, MaxViewX / (1 + 1e-6));
+                maxX = Clamp(maxX, minX * (1 + 1e-6), MaxViewX);
             }
             else
             {
-                minX = Math.Max(minX, LinearMinX(maxX));
+                maxX = Math.Min(maxX, MaxViewX);
+                minX = Math.Min(Math.Max(minX, LinearMinX(maxX)), MaxViewX - MinSpan);
             }
+            minY = Clamp(minY, -MaxViewY, MaxViewY);
+            maxY = Clamp(maxY, -MaxViewY, MaxViewY);
 
-            if (maxX - minX < MinSpan) maxX = minX + MinSpan;
-            if (maxY - minY < MinSpan) maxY = minY + MinSpan;
+            KeepSpan(ref minX, ref maxX, LogX ? MinLogX : double.MinValue, MaxViewX);
+            KeepSpan(ref minY, ref maxY, -MaxViewY, MaxViewY);
 
             MinX = minX;
             MaxX = maxX;
@@ -101,18 +116,34 @@ namespace CurveEditor.Core.Interaction
             double dt = -dxScreen / Width * (t1 - t0);
             double dy = dyScreen / Height * (MaxY - MinY);
 
-            if (!LogX)
-            {
-                // keep the span when the left margin stops the pan
-                double span = t1 - t0;
-                double lowest = -LeftMargin * span / (1 + LeftMargin);
-                if (t0 + dt < lowest) dt = lowest - t0;
-            }
+            // keep the span when the left margin (or either end of the axis) stops the pan
+            double lowest = LogX ? TX(MinLogX) : -LeftMargin * (t1 - t0) / (1 + LeftMargin);
+            double highest = TX(MaxViewX);
+            if (t1 + dt > highest) dt = highest - t1;
+            if (t0 + dt < lowest) dt = lowest - t0;
 
             SetWindow(InvTX(t0 + dt), InvTX(t1 + dt), MinY + dy, MaxY + dy);
         }
 
         private static double LinearMinX(double maxX) => -LeftMargin * Math.Max(maxX, 0);
+
+        private static double Clamp(double v, double lo, double hi) => v < lo ? lo : v > hi ? hi : v;
+
+        /// <summary>
+        /// Makes the window at least a minimum span wide (relative to its size, so it stays
+        /// representable near the limits), moving it back inside [lo, hi] if that overshoots.
+        /// </summary>
+        private static void KeepSpan(ref double min, ref double max, double lo, double hi)
+        {
+            double span = Math.Max(MinSpan, Math.Max(Math.Abs(min), Math.Abs(max)) * 1e-12);
+            if (max - min >= span) return;
+            max = min + span;
+            if (max > hi)
+            {
+                max = hi;
+                min = Math.Max(hi - span, lo);
+            }
+        }
 
         /// <summary>
         /// Centres the view on a data point and scales both spans by <paramref name="factor"/>

@@ -44,11 +44,25 @@ namespace CurveEditor.ViewModels
             Profile = profile;
             name = profile.name;
             AppliedName = profile.name;
+            SidecarName = profile.name;
             Current = state;
             Applied = state;
+            Saved = state;
         }
 
         public Profile Profile { get; }
+
+        /// <summary>
+        /// The state <see cref="Profile"/> holds. Apply only rewrites the profile when the edits
+        /// differ from it, so a profile you didn't touch is saved exactly as it was loaded.
+        /// </summary>
+        public ProfileState Saved { get; set; }
+
+        /// <summary>
+        /// The name the last saved curve-editor.json may hold this profile's points under: its
+        /// name when settings.json was last written, even if the driver then rejected it.
+        /// </summary>
+        public string SidecarName { get; set; }
 
         public string Name
         {
@@ -71,6 +85,34 @@ namespace CurveEditor.ViewModels
         public override string ToString() => Name;
     }
 
+    /// <summary> Which profile each device gets: the first profile, device assignments and device settings. </summary>
+    internal sealed class DeviceLayout
+    {
+        public string FirstProfile { get; set; }
+
+        public HashSet<string> ProfileNames { get; set; }
+
+        public DeviceConfig DefaultConfig { get; set; }
+
+        public List<(string Id, string Profile, DeviceConfig Config)> Devices { get; set; }
+
+        /// <summary> A copy of the layout in <paramref name="config"/> (later edits to it don't change the copy). </summary>
+        public static DeviceLayout Of(DriverConfig config, IEnumerable<string> profileNames = null)
+        {
+            var names = (profileNames ?? config.profiles.Select(p => p.name)).ToList();
+            return new DeviceLayout
+            {
+                FirstProfile = names.FirstOrDefault(),
+                ProfileNames = new HashSet<string>(names),
+                DefaultConfig = config.defaultDeviceConfig,
+                Devices = config.devices.Select(d => (d.id ?? "", d.profile ?? "", d.config)).OrderBy(d => d.Item1, StringComparer.Ordinal).ToList(),
+            };
+        }
+
+        public bool SameDevices(DeviceLayout o) =>
+            o != null && DefaultConfig.Equals(o.DefaultConfig) && Devices.SequenceEqual(o.Devices);
+    }
+
     public sealed class MainViewModel : ObservableObject
     {
         private readonly SettingsService settings;
@@ -88,6 +130,9 @@ namespace CurveEditor.ViewModels
         private ChartKind chartKind = ChartKind.Sensitivity;
         private bool devicesDirty;
         private bool applying;
+
+        /// <summary> What the driver runs (which profile each device gets), or null if unknown. </summary>
+        private DeviceLayout running;
         private string lutText = "";
         private readonly List<string> deletedNames = new List<string>();
         private readonly List<(ProfileEditor Editor, ProfileState State)> loadedStates = new List<(ProfileEditor, ProfileState)>();
@@ -110,7 +155,7 @@ namespace CurveEditor.ViewModels
             };
 
             ApplyCommand = new RelayCommand(async () => await ApplyAsync(), () => !applying);
-            RevertCommand = new RelayCommand(Revert, () => selected?.Applied != null && selected.IsDirty);
+            RevertCommand = new RelayCommand(Revert, () => !applying && selected?.Applied != null && selected.IsDirty);
             UndoCommand = new RelayCommand(Undo, () => selected?.History.CanUndo == true);
             RedoCommand = new RelayCommand(Redo, () => selected?.History.CanRedo == true);
             FitCommand = new RelayCommand(Fit);
@@ -207,6 +252,9 @@ namespace CurveEditor.ViewModels
                 Profiles.Add(editor);
             }
 
+            // without settings.json the editor shows what the driver runs
+            running = !settings.LoadedFromFile ? DeviceLayout.Of(settings.Config)
+                : active == null ? null : DeviceLayout.Of(active);
             devicesDirty = false;
             deletedNames.Clear();
             capStash.Clear();
@@ -370,13 +418,30 @@ namespace CurveEditor.ViewModels
                 view.ScreenToX(view.Left + view.Width * 0.9));
         }
 
-        public bool IsDirty => devicesDirty || PendingSwitch || Profiles.Any(p => p.IsDirty);
+        public bool IsDirty => DevicesDiffer || PendingSwitch || Profiles.Any(p => p.IsDirty);
 
         /// <summary>
-        /// The selected profile is not first yet: Apply moves it there, where every device without
-        /// its own profile picks it up.
+        /// Device settings or the set of profiles (one deleted, say) differ from what the driver
+        /// runs, or, if that is unknown, were changed since loading.
         /// </summary>
-        private bool PendingSwitch => selected != null && Profiles.IndexOf(selected) > 0;
+        private bool DevicesDiffer
+        {
+            get
+            {
+                if (running == null) return devicesDirty;
+                var now = CurrentLayout();
+                return !running.SameDevices(now) || !running.ProfileNames.SetEquals(now.ProfileNames);
+            }
+        }
+
+        private DeviceLayout CurrentLayout() => DeviceLayout.Of(Config, Profiles.Select(p => p.Name));
+
+        /// <summary>
+        /// The selected profile is not the one the driver uses as its first profile: Apply moves it
+        /// first, where every device without its own profile picks it up.
+        /// </summary>
+        private bool PendingSwitch =>
+            selected != null && (Profiles.IndexOf(selected) > 0 || (running != null && running.FirstProfile != selected.AppliedName));
 
         public string DirtyText =>
             PendingSwitch ? $"● Unsaved changes — press Apply to switch to \"{selected.Name}\""
@@ -406,11 +471,15 @@ namespace CurveEditor.ViewModels
             }
         }
 
+        /// <summary> The log speed axis was turned on for a Synchronous curve, not by the user. </summary>
+        private bool logXForSync;
+
         public bool LogX
         {
             get => view.LogX;
             set
             {
+                logXForSync = false;
                 if (view.LogX == value) return;
                 view.SetLogX(value);
                 OnPropertyChanged();
@@ -619,10 +688,11 @@ namespace CurveEditor.ViewModels
                     // start the vertical curve as a copy of the horizontal one
                     next.Y = next.X.Clone();
                 }
-                else if (!value && selected.Applied != null && !selected.Applied.Separate)
+                else if (!value && (selected.Applied ?? selected.Saved) is ProfileState baseline && !baseline.Separate)
                 {
-                    // the driver ignores Y in combined mode; drop the copy so the profile isn't left "changed"
-                    next.Y = selected.Applied.Y;
+                    // the driver ignores Y in combined mode; drop the copy so the profile isn't left
+                    // "changed" (a new or not yet applied profile goes back to its saved Y)
+                    next.Y = baseline.Y.Clone();
                 }
                 selected.Current = next;
                 editingY = false;
@@ -731,7 +801,11 @@ namespace CurveEditor.ViewModels
             }
             selectedHandleId = null;
             handleX.Clear();
-            if (mode == CurveMode.Synchronous && !view.LogX) LogX = true;
+            if (mode == CurveMode.Synchronous && !view.LogX)
+            {
+                LogX = true;
+                logXForSync = true;
+            }
             RebuildParameters();
             RefreshAll();
             // keep the speed range so the axis doesn't jump; only refit it if no handle would be visible
@@ -937,6 +1011,8 @@ namespace CurveEditor.ViewModels
 
         private void Revert()
         {
+            // renaming and moving device assignments while Apply writes them would get lost
+            if (BlockedByApply()) return;
             // null when the driver isn't running this profile (settings.json not applied yet)
             if (selected?.Applied == null) return;
             Push();
@@ -1041,6 +1117,9 @@ namespace CurveEditor.ViewModels
 
         private void RefreshAll(bool parametersOnly = false)
         {
+            // the curve shown is no longer Synchronous (mode change, undo, another profile or axis):
+            // give back the linear speed axis the editor replaced
+            if (logXForSync && CurrentArgs?.Mode != CurveMode.Synchronous) LogX = false;
             var a = CurrentArgs;
             var applied = AppliedArgs;
             if (a != null)
@@ -1179,7 +1258,9 @@ namespace CurveEditor.ViewModels
         private double? SavedMaxY(ChartKind kind)
         {
             var saved = ViewPrefs?.MaxY;
-            return saved != null && saved.TryGetValue(KindKey(kind), out double v) ? CustomCurveSidecar.ViewEntry.Valid(v) : null;
+            // a value saved before the view had limits is shown and used as the limit
+            return saved != null && saved.TryGetValue(KindKey(kind), out double v) && CustomCurveSidecar.ViewEntry.Valid(v) is double ok
+                ? Math.Min(ok, ViewState.MaxViewY) : (double?)null;
         }
 
         private CustomCurveSidecar.ViewEntry EnsureViewPrefs()
@@ -1192,11 +1273,11 @@ namespace CurveEditor.ViewModels
         /// <summary> Right edge of the speed axis at Home (saved, every chart). </summary>
         public double HomeMaxSpeed
         {
-            get => CustomCurveSidecar.ViewEntry.Valid(ViewPrefs?.MaxSpeed) ?? DefaultMaxSpeed;
+            get => Math.Min(CustomCurveSidecar.ViewEntry.Valid(ViewPrefs?.MaxSpeed) ?? DefaultMaxSpeed, ViewState.MaxViewX);
             set
             {
                 if (CustomCurveSidecar.ViewEntry.Valid(value) == null) return;
-                EnsureViewPrefs().MaxSpeed = value;
+                EnsureViewPrefs().MaxSpeed = Math.Min(value, ViewState.MaxViewX);
                 settings.SaveSidecar();
                 ResetView();
             }
@@ -1209,7 +1290,7 @@ namespace CurveEditor.ViewModels
             set
             {
                 if (CustomCurveSidecar.ViewEntry.Valid(value) == null) return;
-                EnsureViewPrefs().MaxY[KindKey(chartKind)] = value;
+                EnsureViewPrefs().MaxY[KindKey(chartKind)] = Math.Min(value, ViewState.MaxViewY);
                 settings.SaveSidecar();
                 ResetView();
             }
@@ -1291,7 +1372,8 @@ namespace CurveEditor.ViewModels
                 }
             }
             view.SetWindow(view.MinX, view.MaxX, 0, top);
-            autoTop = top;
+            // what the view kept, after its limits
+            autoTop = view.MaxY;
             Raise();
         }
 
@@ -1403,23 +1485,26 @@ namespace CurveEditor.ViewModels
 
         /// <summary>
         /// True when movement from this raw input device goes through the selected profile. Same
-        /// rules as grapher SettingsManager.SetActiveHandles, using the editor's device settings.
+        /// rules as grapher SettingsManager.SetActiveHandles, using the device settings the driver runs.
         /// </summary>
         public bool UsesSelectedProfile(IntPtr handle)
         {
-            if (selected == null || Config == null) return false;
+            // the live marker sits on the driver's curve, so route devices like the driver does
+            var layout = running;
+            string name = selected?.AppliedName;
+            if (layout == null || name == null) return false;
             var device = FindDevice(handle);
             if (device == null) return false;
 
-            bool selectedIsFirst = Config.profiles.Count > 0 && Config.profiles[0] == selected.Profile;
-            var assigned = Config.devices.FirstOrDefault(d => d.id == device.id);
+            bool selectedIsFirst = layout.FirstProfile == name;
+            var assigned = layout.Devices.FirstOrDefault(d => d.Id == device.id);
 
-            if (assigned == null) return selectedIsFirst && !Config.defaultDeviceConfig.disable;
-            if (assigned.config.disable) return false;
-            if (assigned.profile == selected.Name) return true;
+            if (assigned.Id == null) return selectedIsFirst && !layout.DefaultConfig.disable;
+            if (assigned.Config.disable) return false;
+            if (assigned.Profile == name) return true;
 
             // an empty or unknown profile name falls back to the first profile
-            return selectedIsFirst && (string.IsNullOrEmpty(assigned.profile) || Profiles.All(p => p.Name != assigned.profile));
+            return selectedIsFirst && (string.IsNullOrEmpty(assigned.Profile) || !layout.ProfileNames.Contains(assigned.Profile));
         }
 
         private MultiHandleDevice FindDevice(IntPtr handle)
@@ -1451,11 +1536,7 @@ namespace CurveEditor.ViewModels
             string name = PromptForText?.Invoke("New profile", "Name for the new profile (starts as a copy of the current one):", UniqueName(selected?.Name ?? "profile"));
             if (string.IsNullOrWhiteSpace(name)) return;
             name = name.Trim();
-            if (Profiles.Any(p => p.Name == name))
-            {
-                Status = $"A profile named \"{name}\" already exists.";
-                return;
-            }
+            if (!NameAllowed(name)) return;
 
             var profile = new Profile { name = name };
             var state = State.Clone();
@@ -1463,7 +1544,8 @@ namespace CurveEditor.ViewModels
             Config.profiles.Add(profile);
             Config.accels.Add(new ManagedAccel(profile));
 
-            var editor = new ProfileEditor(profile, state) { AppliedName = null };
+            // never applied: no ghost curve, nothing to revert to, no live movement
+            var editor = new ProfileEditor(profile, state) { AppliedName = null, Applied = null, SidecarName = null };
             Profiles.Add(editor);
             SelectedProfile = editor;
             RefreshAll();
@@ -1478,11 +1560,7 @@ namespace CurveEditor.ViewModels
             if (string.IsNullOrWhiteSpace(name)) return;
             name = name.Trim();
             if (name == selected.Name) return;
-            if (Profiles.Any(p => p.Name == name))
-            {
-                Status = $"A profile named \"{name}\" already exists.";
-                return;
-            }
+            if (!NameAllowed(name)) return;
 
             foreach (var d in Config.devices.Where(d => d.profile == selected.Name))
             {
@@ -1508,6 +1586,7 @@ namespace CurveEditor.ViewModels
             }
 
             if (victim.AppliedName != null) deletedNames.Add(victim.AppliedName);
+            if (victim.SidecarName != null && victim.SidecarName != victim.AppliedName) deletedNames.Add(victim.SidecarName);
             foreach (var k in capStash.Keys.Where(k => k.Item1 == victim).ToList()) capStash.Remove(k);
 
             int configIndex = Config.profiles.IndexOf(victim.Profile);
@@ -1520,6 +1599,24 @@ namespace CurveEditor.ViewModels
             SelectedProfile = Profiles[0];
             RefreshAll();
             Status = $"Deleted profile \"{victim.Name}\" (not written until you Apply).";
+        }
+
+        /// <summary> Longest profile name the driver keeps (ra::MAX_NAME_LEN including the terminator). </summary>
+        public const int MaxProfileNameLength = 255;
+
+        private bool NameAllowed(string name)
+        {
+            if (name.Length > MaxProfileNameLength)
+            {
+                Status = $"Profile names can be at most {MaxProfileNameLength} characters.";
+                return false;
+            }
+            if (Profiles.Any(p => p.Name == name))
+            {
+                Status = $"A profile named \"{name}\" already exists.";
+                return false;
+            }
+            return true;
         }
 
         private string UniqueName(string baseName)
@@ -1585,9 +1682,11 @@ namespace CurveEditor.ViewModels
         {
             if (!settings.Sidecar.ApplyOnStartup || !settings.LoadedFromFile) return;
             var loaded = loadedStates.ToList();
+            var layout = DeviceLayout.Of(Config);
             string error = await settings.ActivateAsync();
             if (error == null)
             {
+                running = layout;
                 // the driver now runs what was loaded (edits made meanwhile stay unapplied)
                 foreach (var (editor, state) in loaded)
                 {
@@ -1626,13 +1725,20 @@ namespace CurveEditor.ViewModels
             var activate = selected;
             int movedFrom = -1;
             bool succeeded = false;
+            bool keepOrder = false;
             try
             {
                 foreach (var editor in Profiles)
                 {
                     int i = Config.profiles.IndexOf(editor.Profile);
                     editor.Profile.name = editor.Name;
-                    editor.Current.WriteTo(editor.Profile);
+                    // a profile left as loaded is written back unchanged (e.g. keeps its cap mode)
+                    if (!editor.Current.SameAs(editor.Saved))
+                    {
+                        editor.Current.WriteTo(editor.Profile);
+                        editor.Saved = editor.Current;
+                    }
+                    // also when only the name changed: the driver gets the name from here
                     Config.SetProfileAt(i, editor.Profile);
                 }
 
@@ -1649,8 +1755,8 @@ namespace CurveEditor.ViewModels
                 {
                     movedFrom = Profiles.IndexOf(activate);
                     MoveProfile(activate, 0);
-                    switched = activate.Name;
                 }
+                if (activate != null && PendingSwitch) switched = activate.Name;
 
                 // what is being written; edits made while the driver write runs stay unapplied
                 var written = Profiles.Select(e => (Editor: e, State: e.Current, Name: e.Name)).ToList();
@@ -1662,6 +1768,10 @@ namespace CurveEditor.ViewModels
                 foreach (var editor in Profiles)
                 {
                     if (editor.AppliedName != null) sidecar.Profiles.Remove(editor.AppliedName);
+                    // entries left by a write the driver rejected: under the name saved then, or
+                    // under this name for a profile no longer custom
+                    if (editor.SidecarName != null) sidecar.Profiles.Remove(editor.SidecarName);
+                    sidecar.Profiles.Remove(editor.Name);
                 }
                 foreach (var editor in Profiles)
                 {
@@ -1669,7 +1779,15 @@ namespace CurveEditor.ViewModels
                     if (entry != null) sidecar.Profiles[editor.Name] = entry;
                 }
 
-                string errors = await settings.ApplyAsync(sidecar);
+                var layout = DeviceLayout.Of(Config);
+                var (errors, saved) = await settings.ApplyAsync(sidecar);
+                // settings.json now has the picked profile first: keep the list in that order (the
+                // switch stays pending until the driver takes it)
+                keepOrder = saved;
+                if (saved)
+                {
+                    foreach (var w in written) w.Editor.SidecarName = w.Name;
+                }
                 if (errors != null)
                 {
                     Status = errors;
@@ -1682,6 +1800,7 @@ namespace CurveEditor.ViewModels
                     w.Editor.Applied = w.State;
                     w.Editor.AppliedName = w.Name;
                 }
+                running = layout;
                 devicesDirty = false;
                 succeeded = true;
                 foreach (var name in deletedNow) deletedNames.Remove(name);
@@ -1696,7 +1815,7 @@ namespace CurveEditor.ViewModels
             finally
             {
                 // a failed write leaves the switch pending: the driver still runs the old first profile
-                if (!succeeded && movedFrom > 0) MoveProfile(activate, movedFrom);
+                if (!succeeded && !keepOrder && movedFrom > 0) MoveProfile(activate, movedFrom);
                 applying = false;
                 RebuildParameters();
                 RefreshAll();

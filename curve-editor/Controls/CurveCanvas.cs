@@ -773,6 +773,17 @@ namespace CurveEditor.Controls
         protected override void OnKeyDown(KeyEventArgs e)
         {
             base.OnKeyDown(e);
+            // while a handle is dragged, keys that delete, nudge or rescale would fight the drag
+            // (Delete would remove the point under the mouse and the drag would move its neighbour)
+            if (drag == DragMode.Handle)
+            {
+                var k = e.Key == Key.System ? e.SystemKey : e.Key;
+                if (k != Key.LeftShift && k != Key.RightShift && k != Key.LeftCtrl && k != Key.RightCtrl && k != Key.LeftAlt && k != Key.RightAlt)
+                {
+                    e.Handled = true;
+                }
+                return;
+            }
             bool shift = (Keyboard.Modifiers & ModifierKeys.Shift) != 0;
             bool ctrl = (Keyboard.Modifiers & ModifierKeys.Control) != 0;
             var key = e.Key == Key.System ? e.SystemKey : e.Key;
