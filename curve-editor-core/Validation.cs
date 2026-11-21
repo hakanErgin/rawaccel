@@ -5,6 +5,25 @@ namespace CurveEditor.Core
     /// <summary> Port of the accel_args checks in common/rawaccel-validate.hpp, plus the grapher's LUT rules. </summary>
     public static class Validation
     {
+        /// <summary>
+        /// The table rules, judged on the floats the driver stores: values beyond float range
+        /// become infinite there and tiny ones become 0, and NaN would slip through comparisons.
+        /// </summary>
+        private static string PointsError(IReadOnlyList<Point2> points)
+        {
+            for (int i = 0; i < points.Count; i++)
+            {
+                float x = (float)points[i].X, y = (float)points[i].Y;
+                if (float.IsNaN(x) || float.IsInfinity(x) || float.IsNaN(y) || float.IsInfinity(y))
+                    return "lookup values must be finite numbers";
+                if (x <= 0 || (i > 0 && x <= (float)points[i - 1].X))
+                    return "lookup x values must be positive and strictly increasing";
+                if (y <= 0)
+                    return "lookup y values must be positive";
+            }
+            return null;
+        }
+
         public static List<string> Validate(CurveArgs a)
         {
             var errors = new List<string>();
@@ -12,29 +31,40 @@ namespace CurveEditor.Core
 
             if (a.Mode == CurveMode.Lookup)
             {
-                var lut = a.BuildLut();
-
-                if (lut.Length < 2)
+                // the control points first: smoothing points the driver can't hold can overflow
+                // the spline, which then throws instead of giving a table to check
+                string pointError = a.ControlPoints == null ? null : PointsError(a.ControlPoints);
+                Point2[] lut = null;
+                if (pointError == null)
                 {
-                    Error("lookup mode requires at least 2 points");
-                }
-                else if (lut.Length > CurveArgs.MaxLutPoints)
-                {
-                    Error("too many data points (max=257)");
-                }
-
-                for (int i = 0; i < lut.Length; i++)
-                {
-                    if (lut[i].X <= 0 || (i > 0 && (float)lut[i].X <= (float)lut[i - 1].X))
+                    try
                     {
-                        Error("lookup x values must be positive and strictly increasing");
-                        break;
+                        lut = a.BuildLut();
                     }
-                    if (lut[i].Y <= 0)
+                    catch (System.ArithmeticException)
                     {
-                        Error("lookup y values must be positive");
-                        break;
+                        pointError = "lookup values are too extreme to smooth";
                     }
+                }
+
+                if (pointError != null)
+                {
+                    Error(pointError);
+                }
+                else
+                {
+                    if (lut.Length < 2)
+                    {
+                        Error("lookup mode requires at least 2 points");
+                    }
+                    else if (lut.Length > CurveArgs.MaxLutPoints)
+                    {
+                        Error("too many data points (max=257)");
+                    }
+
+                    // the table built from them (smoothed, or scaled to velocity) must hold too
+                    string tableError = PointsError(lut);
+                    if (tableError != null) Error(tableError);
                 }
             }
 

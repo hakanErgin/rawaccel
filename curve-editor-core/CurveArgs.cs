@@ -111,6 +111,21 @@ namespace CurveEditor.Core
                 ControlPoints.SequenceEqual(o.ControlPoints);
         }
 
+        /// <summary>
+        /// Equal as saved: like <see cref="Equals(CurveArgs)"/>, but custom-curve points and
+        /// smoothing only count in lookup mode (other modes never write them to settings.json or
+        /// the sidecar), so trying Custom curve and switching back isn't an unsaved change.
+        /// </summary>
+        public bool SameAsSaved(CurveArgs o)
+        {
+            if (o is null) return false;
+            if (Mode == CurveMode.Lookup || o.Mode == CurveMode.Lookup) return Equals(o);
+            var a = Clone();
+            a.ControlPoints = o.ControlPoints;
+            a.SmoothLut = o.SmoothLut;
+            return a.Equals(o);
+        }
+
         public override bool Equals(object obj) => Equals(obj as CurveArgs);
 
         public override int GetHashCode() => (Mode, Gain, CapX, CapY, ControlPoints.Count).GetHashCode();

@@ -34,6 +34,7 @@ namespace CurveEditor.Services
 
         public void Load()
         {
+            demo = false;
             LoadWarning = null;
             Config = null;
 
@@ -51,9 +52,11 @@ namespace CurveEditor.Services
                         LoadWarning = $"{SettingsFileName} has invalid settings, showing the driver's active settings instead:\n{result.Item2}";
                     }
                 }
-                catch (Exception e) when (e is JsonException || e is IOException)
+                catch (Exception e) when (!(e is OutOfMemoryException))
                 {
-                    LoadWarning = $"{SettingsFileName} could not be read, showing the driver's active settings instead:\n{e.Message}";
+                    // also errors thrown while deserializing (e.g. a profile without "data")
+                    var cause = e is System.Reflection.TargetInvocationException && e.InnerException != null ? e.InnerException : e;
+                    LoadWarning = $"{SettingsFileName} could not be read, showing the driver's active settings instead:\n{cause.Message}";
                 }
             }
 
@@ -75,6 +78,7 @@ namespace CurveEditor.Services
         /// <summary> Default settings without touching the driver or disk (used by --screenshot). </summary>
         public void LoadDefaults()
         {
+            demo = true;
             LoadWarning = null;
             Config = DriverConfig.GetDefault();
             Sidecar = new CustomCurveSidecar();
@@ -93,8 +97,10 @@ namespace CurveEditor.Services
             }
         }
 
+        private bool demo;
+
         /// <summary> True when settings.json existed and was loaded without problems. </summary>
-        public bool LoadedFromFile => File.Exists(SettingsPath) && LoadWarning == null;
+        public bool LoadedFromFile => !demo && File.Exists(SettingsPath) && LoadWarning == null;
 
         /// <summary> Sends the loaded config to the driver without rewriting any files. Returns null on success. </summary>
         public async Task<string> ActivateAsync()
@@ -125,11 +131,12 @@ namespace CurveEditor.Services
         /// <summary>
         /// Validates, writes settings.json and <paramref name="sidecar"/>, then sends the config to the
         /// driver. <paramref name="sidecar"/> replaces <see cref="Sidecar"/> only once settings.json is written.
+        /// Returns the error (null on success) and whether settings.json was written.
         /// </summary>
-        public async Task<string> ApplyAsync(CustomCurveSidecar sidecar)
+        public async Task<(string Error, bool Saved)> ApplyAsync(CustomCurveSidecar sidecar)
         {
             string errors = Config.Errors();
-            if (errors != null) return errors;
+            if (errors != null) return (errors, false);
 
             AtomicFile.WriteAllText(SettingsPath, Config.ToJSON());
             // editor preferences may have changed while the caller built its copy
@@ -153,10 +160,10 @@ namespace CurveEditor.Services
             }
             catch (InteropException e)
             {
-                return "Settings were saved, but the driver rejected them: " + e.Message;
+                return ("Settings were saved, but the driver rejected them: " + e.Message, true);
             }
 
-            return null;
+            return (null, true);
         }
     }
 }

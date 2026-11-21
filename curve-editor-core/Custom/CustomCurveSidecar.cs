@@ -73,7 +73,7 @@ namespace CurveEditor.Core
             {
                 if (File.Exists(path))
                 {
-                    return JsonConvert.DeserializeObject<CustomCurveSidecar>(File.ReadAllText(path)) ?? new CustomCurveSidecar();
+                    return Parse(File.ReadAllText(path));
                 }
             }
             catch (Exception e) when (e is JsonException || e is IOException || e is UnauthorizedAccessException)
@@ -81,6 +81,16 @@ namespace CurveEditor.Core
                 // a broken sidecar only loses smoothing metadata; fall back to the raw table
             }
             return new CustomCurveSidecar();
+        }
+
+        /// <summary> Reads the file's text; explicit nulls (e.g. edited by hand) become empty values. </summary>
+        public static CustomCurveSidecar Parse(string json)
+        {
+            var s = JsonConvert.DeserializeObject<CustomCurveSidecar>(json) ?? new CustomCurveSidecar();
+            if (s.Profiles == null) s.Profiles = new Dictionary<string, ProfileEntry>();
+            foreach (var key in s.Profiles.Where(p => p.Value == null).Select(p => p.Key).ToList()) s.Profiles.Remove(key);
+            if (s.View != null && s.View.MaxY == null) s.View.MaxY = new Dictionary<string, double>();
+            return s;
         }
 
         public void Save(string path) => AtomicFile.WriteAllText(path, JsonConvert.SerializeObject(this, Formatting.Indented));
@@ -97,7 +107,7 @@ namespace CurveEditor.Core
         /// </summary>
         public static void Restore(CurveArgs args, IReadOnlyList<Point2> driverLut, CurveEntry saved)
         {
-            if (saved != null && saved.Points.Count >= 2 && saved.Points.All(p => p != null && p.Length == 2))
+            if (saved?.Points != null && saved.Points.Count >= 2 && saved.Points.All(p => p != null && p.Length == 2))
             {
                 var cps = saved.Points.Select(p => new Point2(p[0], p[1])).ToList();
                 var rebuilt = LutBuilder.Build(cps, saved.Smooth, args.Gain);
